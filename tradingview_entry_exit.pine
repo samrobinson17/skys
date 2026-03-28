@@ -1,31 +1,98 @@
 //@version=5
-indicator("Entry & TP Signal Indicator", overlay=true, max_labels_count=500)
+// ═══════════════════════════════════════════════════════════════════
+//  HIGH-CONFLUENCE ENTRY & TP INDICATOR  |  Pine Script v5
+//  Strategy: Only fires when 5+ independent signals agree.
+//  Layers: Trend · Momentum · Volume · Structure · Pattern · Time
+// ═══════════════════════════════════════════════════════════════════
+indicator("High-Confluence Entry & TP", overlay=true, max_labels_count=500, max_lines_count=500)
 
 // ─────────────────────────────────────────────
 // INPUTS
 // ─────────────────────────────────────────────
-emaFastLen   = input.int(9,   "Fast EMA",   minval=1)
-emaSlowLen   = input.int(21,  "Slow EMA",   minval=1)
-emaTrendLen  = input.int(50,  "Trend EMA",  minval=1)
-rsiLen       = input.int(14,  "RSI Length", minval=1)
-rsiOB        = input.int(70,  "RSI Overbought", minval=50, maxval=100)
-rsiOS        = input.int(30,  "RSI Oversold",   minval=0,  maxval=50)
-atrLen       = input.int(14,  "ATR Length", minval=1)
-tp1Mult      = input.float(1.5, "TP1 ATR Multiplier", minval=0.5, step=0.1)
-tp2Mult      = input.float(3.0, "TP2 ATR Multiplier", minval=0.5, step=0.1)
-showTP       = input.bool(true, "Show TP Levels")
-showLabels   = input.bool(true, "Show Entry Labels")
+grpMain  = "═══ Core Settings ═══"
+grpTP    = "═══ TP / SL Settings ═══"
+grpFilt  = "═══ Filters ═══"
+grpDisp  = "═══ Display ═══"
+
+// EMA stack
+ema8Len  = input.int(8,   "EMA 8",  group=grpMain, minval=1)
+ema21Len = input.int(21,  "EMA 21", group=grpMain, minval=1)
+ema50Len = input.int(50,  "EMA 50", group=grpMain, minval=1)
+ema200Len= input.int(200, "EMA 200 (Macro Trend)", group=grpMain, minval=1)
+
+// RSI
+rsiLen   = input.int(14, "RSI Length",        group=grpMain, minval=1)
+rsiOB    = input.int(65, "RSI Overbought",    group=grpMain, minval=50, maxval=90)
+rsiOS    = input.int(35, "RSI Oversold",      group=grpMain, minval=10, maxval=50)
+
+// MACD
+macdFast = input.int(12, "MACD Fast",  group=grpMain, minval=1)
+macdSlow = input.int(26, "MACD Slow",  group=grpMain, minval=1)
+macdSig  = input.int(9,  "MACD Signal",group=grpMain, minval=1)
+
+// Stochastic
+stochK   = input.int(14, "Stoch %K",   group=grpMain, minval=1)
+stochD   = input.int(3,  "Stoch %D",   group=grpMain, minval=1)
+stochSm  = input.int(3,  "Stoch Smooth",group=grpMain,minval=1)
+stochOB  = input.int(80, "Stoch OB",   group=grpMain, minval=60, maxval=100)
+stochOS  = input.int(20, "Stoch OS",   group=grpMain, minval=0,  maxval=40)
+
+// ATR / TP / SL
+atrLen   = input.int(14,  "ATR Length",         group=grpTP, minval=1)
+slMult   = input.float(1.0,"SL ATR Multiplier", group=grpTP, minval=0.3, step=0.1)
+tp1Mult  = input.float(1.5,"TP1 ATR Multiplier",group=grpTP, minval=0.5, step=0.1)
+tp2Mult  = input.float(3.0,"TP2 ATR Multiplier",group=grpTP, minval=1.0, step=0.1)
+tp3Mult  = input.float(5.0,"TP3 ATR Multiplier",group=grpTP, minval=2.0, step=0.1)
+
+// Filters
+volFilt  = input.bool(true, "Require Above-Average Volume", group=grpFilt)
+volMult  = input.float(1.2, "Volume Multiplier (vs SMA 20)",group=grpFilt, step=0.1)
+minConf  = input.int(4, "Min Confluence Score (1-7)", group=grpFilt, minval=1, maxval=7)
+
+// Display
+showEMAs = input.bool(true,  "Show EMAs",        group=grpDisp)
+showTP   = input.bool(true,  "Show TP/SL Lines", group=grpDisp)
+showLbl  = input.bool(true,  "Show Labels",      group=grpDisp)
+showScore= input.bool(true,  "Show Score Table",  group=grpDisp)
 
 // ─────────────────────────────────────────────
-// CALCULATIONS
+// CALCULATIONS — EMAs
 // ─────────────────────────────────────────────
-emaFast  = ta.ema(close, emaFastLen)
-emaSlow  = ta.ema(close, emaSlowLen)
-emaTrend = ta.ema(close, emaTrendLen)
-rsi      = ta.rsi(close, rsiLen)
-atr      = ta.atr(atrLen)
+ema8   = ta.ema(close, ema8Len)
+ema21  = ta.ema(close, ema21Len)
+ema50  = ta.ema(close, ema50Len)
+ema200 = ta.ema(close, ema200Len)
 
-// Candle body / wick helpers
+// ─────────────────────────────────────────────
+// CALCULATIONS — RSI
+// ─────────────────────────────────────────────
+rsi = ta.rsi(close, rsiLen)
+
+// ─────────────────────────────────────────────
+// CALCULATIONS — MACD
+// ─────────────────────────────────────────────
+[macdLine, signalLine, macdHist] = ta.macd(close, macdFast, macdSlow, macdSig)
+macdBullCross = ta.crossover(macdLine, signalLine)
+macdBearCross = ta.crossunder(macdLine, signalLine)
+
+// ─────────────────────────────────────────────
+// CALCULATIONS — Stochastic
+// ─────────────────────────────────────────────
+stK = ta.sma(ta.stoch(close, high, low, stochK), stochSm)
+stD = ta.sma(stK, stochD)
+stochBullCross = ta.crossover(stK, stD) and stK < stochOS
+stochBearCross = ta.crossunder(stK, stD) and stK > stochOB
+
+// ─────────────────────────────────────────────
+// CALCULATIONS — ATR & Volume
+// ─────────────────────────────────────────────
+atr     = ta.atr(atrLen)
+volSMA  = ta.sma(volume, 20)
+highVol = volume > volSMA * volMult
+
+// ─────────────────────────────────────────────
+// CANDLESTICK PATTERNS
+// ─────────────────────────────────────────────
 bodySize   = math.abs(close - open)
 candleSize = high - low
 upperWick  = high - math.max(close, open)
@@ -33,155 +100,243 @@ lowerWick  = math.min(close, open) - low
 isBull     = close > open
 isBear     = close < open
 
-// ─────────────────────────────────────────────
-// CANDLESTICK PATTERNS
-// ─────────────────────────────────────────────
+// Bullish engulfing
+bullEngulf = isBear[1] and isBull and open <= close[1] and close >= open[1] and bodySize > bodySize[1]
 
-// Bullish Engulfing
-bullEngulf = isBear[1] and isBull and close > open[1] and open < close[1]
+// Bearish engulfing
+bearEngulf = isBull[1] and isBear and open >= close[1] and close <= open[1] and bodySize > bodySize[1]
 
-// Bearish Engulfing
-bearEngulf = isBull[1] and isBear and close < open[1] and open > close[1]
+// Hammer / Inverted shooting star
+hammer      = lowerWick >= bodySize * 2.0 and upperWick <= bodySize * 0.5 and bodySize > atr * 0.2
+shootingStar= upperWick >= bodySize * 2.0 and lowerWick <= bodySize * 0.5 and bodySize > atr * 0.2
 
-// Hammer (bullish reversal)
-hammer = lowerWick >= bodySize * 2 and upperWick <= bodySize * 0.5 and bodySize > 0
+// Morning / Evening star (simplified)
+morningStar  = isBear[2] and bodySize[1] < bodySize[2] * 0.4 and isBull  and close > (open[2] + close[2]) / 2
+eveningStar  = isBull[2] and bodySize[1] < bodySize[2] * 0.4 and isBear  and close < (open[2] + close[2]) / 2
 
-// Shooting Star (bearish reversal)
-shootingStar = upperWick >= bodySize * 2 and lowerWick <= bodySize * 0.5 and bodySize > 0
+// Bullish / Bearish pin bar
+bullPin = lowerWick >= candleSize * 0.55 and bodySize < candleSize * 0.35
+bearPin = upperWick >= candleSize * 0.55 and bodySize < candleSize * 0.35
 
-// Morning Star (3-candle bullish)
-morningStar = isBear[2] and bodySize[1] < bodySize[2] * 0.5 and isBull and close > (open[2] + close[2]) / 2
+// Three white soldiers / Three black crows
+threeWhite = isBull and isBull[1] and isBull[2] and close > close[1] and close[1] > close[2]
+threeCrows = isBear and isBear[1] and isBear[2] and close < close[1] and close[1] < close[2]
 
-// Evening Star (3-candle bearish)
-eveningStar = isBull[2] and bodySize[1] < bodySize[2] * 0.5 and isBear and close < (open[2] + close[2]) / 2
-
-// Bullish Pin Bar
-bullPin = lowerWick >= candleSize * 0.6 and bodySize <= candleSize * 0.3
-
-// Bearish Pin Bar
-bearPin = upperWick >= candleSize * 0.6 and bodySize <= candleSize * 0.3
+bullPattern = bullEngulf or hammer    or morningStar or bullPin or threeWhite
+bearPattern = bearEngulf or shootingStar or eveningStar or bearPin or threeCrows
 
 // ─────────────────────────────────────────────
-// TREND FILTER
+// STRUCTURE — Swing Highs / Lows (50-bar lookback)
 // ─────────────────────────────────────────────
-bullTrend = close > emaTrend and emaFast > emaSlow
-bearTrend = close < emaTrend and emaFast < emaSlow
+swingLen = 5
+swingHigh = ta.pivothigh(high, swingLen, swingLen)
+swingLow  = ta.pivotlow(low,  swingLen, swingLen)
 
-// EMA crossover
-emaCrossUp   = ta.crossover(emaFast, emaSlow)
-emaCrossDown = ta.crossunder(emaFast, emaSlow)
+// Track last swing high and low
+var float lastSwingHigh = na
+var float lastSwingLow  = na
+if not na(swingHigh)
+    lastSwingHigh := swingHigh
+if not na(swingLow)
+    lastSwingLow  := swingLow
 
-// ─────────────────────────────────────────────
-// ENTRY CONDITIONS
-// ─────────────────────────────────────────────
-
-// Long entry: bullish pattern + uptrend + RSI not overbought
-longPattern  = bullEngulf or hammer or morningStar or bullPin
-longEntry    = longPattern and bullTrend and rsi < rsiOB and emaCrossUp == false
-
-// Long entry on EMA crossover confirmation
-longCross    = emaCrossUp and close > emaTrend and rsi < rsiOB
-
-longSignal   = (longEntry or longCross) and not (longEntry[1] or longCross[1])
-
-// Short entry: bearish pattern + downtrend + RSI not oversold
-shortPattern = bearEngulf or shootingStar or eveningStar or bearPin
-shortEntry   = shortPattern and bearTrend and rsi > rsiOS and emaCrossDown == false
-
-// Short entry on EMA crossover confirmation
-shortCross   = emaCrossDown and close < emaTrend and rsi > rsiOS
-
-shortSignal  = (shortEntry or shortCross) and not (shortEntry[1] or shortCross[1])
+// Price near support / resistance (within 0.5 ATR)
+nearSupport    = not na(lastSwingLow)  and close <= lastSwingLow  + atr * 0.5 and close >= lastSwingLow  - atr * 0.2
+nearResistance = not na(lastSwingHigh) and close >= lastSwingHigh - atr * 0.5 and close <= lastSwingHigh + atr * 0.2
 
 // ─────────────────────────────────────────────
-// TP LEVELS (ATR-based from entry candle)
+// TREND FILTERS — must all agree
 // ─────────────────────────────────────────────
+
+// Strong bull trend: EMA stack perfectly ordered and price above all
+bullStack  = ema8 > ema21 and ema21 > ema50 and close > ema50
+// Macro: price above 200 EMA
+macroBull  = close > ema200
+// Macro bear
+macroBear  = close < ema200
+
+// Bear trend
+bearStack  = ema8 < ema21 and ema21 < ema50 and close < ema50
+
+// EMA cross signals (fast x slow)
+emaCrossUp   = ta.crossover(ema8, ema21)
+emaCrossDown = ta.crossunder(ema8, ema21)
+
+// ─────────────────────────────────────────────
+// CONFLUENCE SCORING (0–7 per direction)
+// Each layer = 1 point
+// ─────────────────────────────────────────────
+
+// LONG score
+longS1 = bullStack  ? 1 : 0                               // 1. EMA trend
+longS2 = macroBull  ? 1 : 0                               // 2. Macro trend (200 EMA)
+longS3 = (rsi > 40 and rsi < rsiOB) ? 1 : 0              // 3. RSI bullish range
+longS4 = (macdLine > signalLine or macdBullCross) ? 1 : 0 // 4. MACD bullish
+longS5 = (stK > stD and stK < stochOB) ? 1 : 0            // 5. Stochastic bullish
+longS6 = bullPattern ? 1 : 0                              // 6. Candlestick pattern
+longS7 = nearSupport ? 1 : 0                              // 7. Near support
+longScore = longS1 + longS2 + longS3 + longS4 + longS5 + longS6 + longS7
+
+// SHORT score
+shortS1 = bearStack  ? 1 : 0
+shortS2 = macroBear  ? 1 : 0
+shortS3 = (rsi < 60 and rsi > rsiOS) ? 1 : 0
+shortS4 = (macdLine < signalLine or macdBearCross) ? 1 : 0
+shortS5 = (stK < stD and stK > stochOS) ? 1 : 0
+shortS6 = bearPattern ? 1 : 0
+shortS7 = nearResistance ? 1 : 0
+shortScore = shortS1 + shortS2 + shortS3 + shortS4 + shortS5 + shortS6 + shortS7
+
+// Volume filter (optional gate)
+volOk = volFilt ? highVol : true
+
+// ─────────────────────────────────────────────
+// FINAL SIGNAL — only fire at score threshold
+// ─────────────────────────────────────────────
+longSignal  = longScore  >= minConf and volOk and not (longScore[1]  >= minConf and volOk[1])
+shortSignal = shortScore >= minConf and volOk and not (shortScore[1] >= minConf and volOk[1])
+
+// ─────────────────────────────────────────────
+// TP / SL LEVELS
+// ─────────────────────────────────────────────
+var float longSL   = na
 var float longTP1  = na
 var float longTP2  = na
+var float longTP3  = na
+var float shortSL  = na
 var float shortTP1 = na
 var float shortTP2 = na
-var float longSL   = na
-var float shortSL  = na
+var float shortTP3 = na
 
 if longSignal
-    longTP1  := close + atr * tp1Mult
-    longTP2  := close + atr * tp2Mult
-    longSL   := close - atr
+    longSL  := close - atr * slMult
+    longTP1 := close + atr * tp1Mult
+    longTP2 := close + atr * tp2Mult
+    longTP3 := close + atr * tp3Mult
 
 if shortSignal
+    shortSL  := close + atr * slMult
     shortTP1 := close - atr * tp1Mult
     shortTP2 := close - atr * tp2Mult
-    shortSL  := close + atr
+    shortTP3 := close - atr * tp3Mult
 
 // ─────────────────────────────────────────────
-// PLOTS
+// PLOTS — EMAs
 // ─────────────────────────────────────────────
-plot(emaFast,  "EMA Fast",  color=color.new(color.blue,  0), linewidth=1)
-plot(emaSlow,  "EMA Slow",  color=color.new(color.orange,0), linewidth=1)
-plot(emaTrend, "EMA Trend", color=color.new(color.gray,  0), linewidth=2)
+plot(showEMAs ? ema8   : na, "EMA 8",   color=color.new(color.aqua,   0), linewidth=1)
+plot(showEMAs ? ema21  : na, "EMA 21",  color=color.new(color.yellow, 0), linewidth=1)
+plot(showEMAs ? ema50  : na, "EMA 50",  color=color.new(color.orange, 0), linewidth=2)
+plot(showEMAs ? ema200 : na, "EMA 200", color=color.new(color.white,  40),linewidth=2)
 
-// Entry arrows
-plotshape(longSignal,  title="Long Entry",  style=shape.triangleup,   location=location.belowbar, color=color.new(color.lime,  0), size=size.normal, text="LONG")
-plotshape(shortSignal, title="Short Entry", style=shape.triangledown, location=location.abovebar, color=color.new(color.red,   0), size=size.normal, text="SHORT")
+// ─────────────────────────────────────────────
+// PLOTS — Signals
+// ─────────────────────────────────────────────
+plotshape(longSignal,
+ title="Long Entry", style=shape.triangleup, location=location.belowbar,
+ color=color.new(color.lime, 0), size=size.normal, text="▲ LONG")
 
-// TP / SL lines on signal bars
+plotshape(shortSignal,
+ title="Short Entry", style=shape.triangledown, location=location.abovebar,
+ color=color.new(color.red, 0), size=size.normal, text="▼ SHORT")
+
+// Background
+bgcolor(longSignal  ? color.new(color.lime, 88) : na, title="Long BG")
+bgcolor(shortSignal ? color.new(color.red,  88) : na, title="Short BG")
+
+// ─────────────────────────────────────────────
+// PLOTS — TP / SL Lines & Labels
+// ─────────────────────────────────────────────
+extendBars = 25
+
 if showTP and longSignal
-    line.new(bar_index, longTP1, bar_index + 20, longTP1, color=color.new(color.green, 30), width=1, style=line.style_dashed)
-    line.new(bar_index, longTP2, bar_index + 20, longTP2, color=color.new(color.green, 0),  width=2, style=line.style_dashed)
-    line.new(bar_index, longSL,  bar_index + 20, longSL,  color=color.new(color.red,   0),  width=1, style=line.style_dotted)
+    line.new(bar_index, longSL,  bar_index + extendBars, longSL,  color=color.new(color.red,   10), width=1, style=line.style_dotted)
+    line.new(bar_index, longTP1, bar_index + extendBars, longTP1, color=color.new(color.lime,  40), width=1, style=line.style_dashed)
+    line.new(bar_index, longTP2, bar_index + extendBars, longTP2, color=color.new(color.lime,  10), width=2, style=line.style_dashed)
+    line.new(bar_index, longTP3, bar_index + extendBars, longTP3, color=color.new(color.lime,   0), width=2, style=line.style_solid)
 
 if showTP and shortSignal
-    line.new(bar_index, shortTP1, bar_index + 20, shortTP1, color=color.new(color.orange, 30), width=1, style=line.style_dashed)
-    line.new(bar_index, shortTP2, bar_index + 20, shortTP2, color=color.new(color.orange, 0),  width=2, style=line.style_dashed)
-    line.new(bar_index, shortSL,  bar_index + 20, shortSL,  color=color.new(color.red,    0),  width=1, style=line.style_dotted)
+    line.new(bar_index, shortSL,  bar_index + extendBars, shortSL,  color=color.new(color.red,    10), width=1, style=line.style_dotted)
+    line.new(bar_index, shortTP1, bar_index + extendBars, shortTP1, color=color.new(color.orange, 40), width=1, style=line.style_dashed)
+    line.new(bar_index, shortTP2, bar_index + extendBars, shortTP2, color=color.new(color.orange, 10), width=2, style=line.style_dashed)
+    line.new(bar_index, shortTP3, bar_index + extendBars, shortTP3, color=color.new(color.orange,  0), width=2, style=line.style_solid)
 
-// Labels
-if showLabels and longSignal
-    label.new(bar_index, low - atr * 0.3,
-     "LONG\nTP1: " + str.tostring(math.round(longTP1, 2)) +
-     "\nTP2: "     + str.tostring(math.round(longTP2, 2)) +
-     "\nSL: "      + str.tostring(math.round(longSL,  2)),
-     style=label.style_label_up, color=color.new(color.lime, 20),
-     textcolor=color.white, size=size.small)
+if showLbl and longSignal
+    label.new(bar_index, low - atr * 0.5,
+     "LONG  Score: " + str.tostring(longScore) + "/7" +
+     "\nTP1: " + str.tostring(math.round(longTP1, 4)) +
+     "\nTP2: " + str.tostring(math.round(longTP2, 4)) +
+     "\nTP3: " + str.tostring(math.round(longTP3, 4)) +
+     "\nSL:  " + str.tostring(math.round(longSL,  4)),
+     style=label.style_label_up,
+     color=color.new(color.lime, 15), textcolor=color.white, size=size.small)
 
-if showLabels and shortSignal
-    label.new(bar_index, high + atr * 0.3,
-     "SHORT\nTP1: " + str.tostring(math.round(shortTP1, 2)) +
-     "\nTP2: "      + str.tostring(math.round(shortTP2, 2)) +
-     "\nSL: "       + str.tostring(math.round(shortSL,  2)),
-     style=label.style_label_down, color=color.new(color.red, 20),
-     textcolor=color.white, size=size.small)
-
-// Background highlight on signal bars
-bgcolor(longSignal  ? color.new(color.lime, 85) : na, title="Long BG")
-bgcolor(shortSignal ? color.new(color.red,  85) : na, title="Short BG")
+if showLbl and shortSignal
+    label.new(bar_index, high + atr * 0.5,
+     "SHORT  Score: " + str.tostring(shortScore) + "/7" +
+     "\nTP1: " + str.tostring(math.round(shortTP1, 4)) +
+     "\nTP2: " + str.tostring(math.round(shortTP2, 4)) +
+     "\nTP3: " + str.tostring(math.round(shortTP3, 4)) +
+     "\nSL:  " + str.tostring(math.round(shortSL,  4)),
+     style=label.style_label_down,
+     color=color.new(color.red, 15), textcolor=color.white, size=size.small)
 
 // ─────────────────────────────────────────────
-// INFO TABLE
+// INFO / SCORE TABLE
 // ─────────────────────────────────────────────
-var table info = table.new(position.top_right, 2, 6,
- bgcolor=color.new(color.black, 60), border_color=color.gray, border_width=1)
+var table scoreTable = table.new(position.top_right, 3, 10,
+ bgcolor=color.new(color.black, 55), border_color=color.new(color.gray, 40), border_width=1, frame_color=color.gray, frame_width=1)
 
-if barstate.islast
-    table.cell(info, 0, 0, "Indicator",   text_color=color.white, text_size=size.small, bgcolor=color.new(color.blue, 40))
-    table.cell(info, 1, 0, "Value",       text_color=color.white, text_size=size.small, bgcolor=color.new(color.blue, 40))
-    table.cell(info, 0, 1, "RSI",         text_color=color.white, text_size=size.small)
-    table.cell(info, 1, 1, str.tostring(math.round(rsi, 1)),
-     text_color = rsi > rsiOB ? color.red : rsi < rsiOS ? color.lime : color.white,
-     text_size=size.small)
-    table.cell(info, 0, 2, "Trend",       text_color=color.white,  text_size=size.small)
-    table.cell(info, 1, 2, bullTrend ? "BULL" : bearTrend ? "BEAR" : "NEUTRAL",
-     text_color = bullTrend ? color.lime : bearTrend ? color.red : color.gray,
-     text_size=size.small)
-    table.cell(info, 0, 3, "EMA Fast",    text_color=color.white,  text_size=size.small)
-    table.cell(info, 1, 3, str.tostring(math.round(emaFast, 2)),   text_color=color.blue,   text_size=size.small)
-    table.cell(info, 0, 4, "EMA Slow",    text_color=color.white,  text_size=size.small)
-    table.cell(info, 1, 4, str.tostring(math.round(emaSlow, 2)),   text_color=color.orange, text_size=size.small)
-    table.cell(info, 0, 5, "ATR",         text_color=color.white,  text_size=size.small)
-    table.cell(info, 1, 5, str.tostring(math.round(atr, 4)),       text_color=color.yellow, text_size=size.small)
+check(v) => v ? "✔" : "✘"
+chkColor(v) => v ? color.lime : color.new(color.red, 30)
+
+if barstate.islast and showScore
+    // Header
+    table.cell(scoreTable, 0, 0, "Layer",   text_color=color.white, text_size=size.small, bgcolor=color.new(color.navy, 20))
+    table.cell(scoreTable, 1, 0, "LONG",    text_color=color.lime,  text_size=size.small, bgcolor=color.new(color.navy, 20))
+    table.cell(scoreTable, 2, 0, "SHORT",   text_color=color.red,   text_size=size.small, bgcolor=color.new(color.navy, 20))
+    // Rows
+    table.cell(scoreTable, 0, 1, "EMA Stack",   text_color=color.white, text_size=size.tiny)
+    table.cell(scoreTable, 1, 1, check(longS1 == 1), text_color=chkColor(longS1 == 1),  text_size=size.tiny)
+    table.cell(scoreTable, 2, 1, check(shortS1 == 1),text_color=chkColor(shortS1 == 1), text_size=size.tiny)
+
+    table.cell(scoreTable, 0, 2, "200 EMA Macro", text_color=color.white, text_size=size.tiny)
+    table.cell(scoreTable, 1, 2, check(longS2 == 1), text_color=chkColor(longS2 == 1),  text_size=size.tiny)
+    table.cell(scoreTable, 2, 2, check(shortS2 == 1),text_color=chkColor(shortS2 == 1), text_size=size.tiny)
+
+    table.cell(scoreTable, 0, 3, "RSI (" + str.tostring(math.round(rsi,1)) + ")", text_color=color.white, text_size=size.tiny)
+    table.cell(scoreTable, 1, 3, check(longS3 == 1), text_color=chkColor(longS3 == 1),  text_size=size.tiny)
+    table.cell(scoreTable, 2, 3, check(shortS3 == 1),text_color=chkColor(shortS3 == 1), text_size=size.tiny)
+
+    table.cell(scoreTable, 0, 4, "MACD",   text_color=color.white, text_size=size.tiny)
+    table.cell(scoreTable, 1, 4, check(longS4 == 1), text_color=chkColor(longS4 == 1),  text_size=size.tiny)
+    table.cell(scoreTable, 2, 4, check(shortS4 == 1),text_color=chkColor(shortS4 == 1), text_size=size.tiny)
+
+    table.cell(scoreTable, 0, 5, "Stochastic", text_color=color.white, text_size=size.tiny)
+    table.cell(scoreTable, 1, 5, check(longS5 == 1), text_color=chkColor(longS5 == 1),  text_size=size.tiny)
+    table.cell(scoreTable, 2, 5, check(shortS5 == 1),text_color=chkColor(shortS5 == 1), text_size=size.tiny)
+
+    table.cell(scoreTable, 0, 6, "Candle Pattern", text_color=color.white, text_size=size.tiny)
+    table.cell(scoreTable, 1, 6, check(longS6 == 1), text_color=chkColor(longS6 == 1),  text_size=size.tiny)
+    table.cell(scoreTable, 2, 6, check(shortS6 == 1),text_color=chkColor(shortS6 == 1), text_size=size.tiny)
+
+    table.cell(scoreTable, 0, 7, "S/R Level", text_color=color.white, text_size=size.tiny)
+    table.cell(scoreTable, 1, 7, check(longS7 == 1), text_color=chkColor(longS7 == 1),  text_size=size.tiny)
+    table.cell(scoreTable, 2, 7, check(shortS7 == 1),text_color=chkColor(shortS7 == 1), text_size=size.tiny)
+
+    table.cell(scoreTable, 0, 8, "Volume OK", text_color=color.white, text_size=size.tiny)
+    table.cell(scoreTable, 1, 8, check(volOk), text_color=chkColor(volOk), text_size=size.tiny)
+    table.cell(scoreTable, 2, 8, check(volOk), text_color=chkColor(volOk), text_size=size.tiny)
+
+    table.cell(scoreTable, 0, 9, "SCORE", text_color=color.white, text_size=size.small, bgcolor=color.new(color.navy, 30))
+    table.cell(scoreTable, 1, 9, str.tostring(longScore)  + " / 7",
+     text_color = longScore  >= minConf ? color.lime : color.gray, text_size=size.small, bgcolor=color.new(color.navy, 30))
+    table.cell(scoreTable, 2, 9, str.tostring(shortScore) + " / 7",
+     text_color = shortScore >= minConf ? color.red  : color.gray, text_size=size.small, bgcolor=color.new(color.navy, 30))
 
 // ─────────────────────────────────────────────
 // ALERTS
 // ─────────────────────────────────────────────
-alertcondition(longSignal,  "Long Entry Signal",  "LONG entry detected — check TP/SL levels")
-alertcondition(shortSignal, "Short Entry Signal", "SHORT entry detected — check TP/SL levels")
+alertcondition(longSignal,  "LONG Entry (High Confluence)",
+ "LONG signal fired — Score: {{longScore}}/7. Check TP/SL on chart.")
+alertcondition(shortSignal, "SHORT Entry (High Confluence)",
+ "SHORT signal fired. Check TP/SL on chart.")
