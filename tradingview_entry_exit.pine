@@ -1,7 +1,7 @@
 //@version=5
 // ═══════════════════════════════════════════════════════════════════
 //  HIGH-CONFLUENCE ENTRY & TP INDICATOR  |  Pine Script v5
-//  Strategy: Only fires when 5+ independent signals agree.
+//  Strategy: Only fires when 4+ independent signals agree (configurable).
 //  Layers: Trend · Momentum · Volume · Structure · Pattern · Time
 // ═══════════════════════════════════════════════════════════════════
 indicator("High-Confluence Entry & TP", overlay=true, max_labels_count=500, max_lines_count=500)
@@ -80,8 +80,7 @@ macdBearCross = ta.crossunder(macdLine, signalLine)
 // ─────────────────────────────────────────────
 stK = ta.sma(ta.stoch(close, high, low, stochK), stochSm)
 stD = ta.sma(stK, stochD)
-stochBullCross = ta.crossover(stK, stD) and stK < stochOS
-stochBearCross = ta.crossunder(stK, stD) and stK > stochOB
+// (crossover variants unused — scoring uses stK/stD direction instead)
 
 // ─────────────────────────────────────────────
 // CALCULATIONS — ATR & Volume
@@ -158,9 +157,7 @@ macroBear  = close < ema200
 // Bear trend
 bearStack  = ema8 < ema21 and ema21 < ema50 and close < ema50
 
-// EMA cross signals (fast x slow)
-emaCrossUp   = ta.crossover(ema8, ema21)
-emaCrossDown = ta.crossunder(ema8, ema21)
+// (EMA crossovers not used in scoring — stack direction is sufficient)
 
 // ─────────────────────────────────────────────
 // CONFLUENCE SCORING (0–7 per direction)
@@ -337,6 +334,6 @@ if barstate.islast and showScore
 // ALERTS
 // ─────────────────────────────────────────────
 alertcondition(longSignal,  "LONG Entry (High Confluence)",
- "LONG signal fired — Score: {{longScore}}/7. Check TP/SL on chart.")
+ "LONG entry signal on {{ticker}} ({{interval}}). Check TP/SL on chart.")
 alertcondition(shortSignal, "SHORT Entry (High Confluence)",
  "SHORT signal fired. Check TP/SL on chart.")
