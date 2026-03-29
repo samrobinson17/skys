@@ -163,12 +163,12 @@ if shortSignal
 // Assumes price moves ~0.45 ATR per bar on average intraday.
 // hold_mins = bars_needed × timeframe_minutes
 // ─────────────────────────────────────────────
+// Hours are stored as minutes in Pine Script (1H = isminutes, multiplier=60)
 tf_mins = timeframe.isseconds ? timeframe.multiplier / 60.0    :
           timeframe.isminutes ? timeframe.multiplier * 1.0     :
-          timeframe.ishours   ? timeframe.multiplier * 60.0    :
           timeframe.isdaily   ? timeframe.multiplier * 1440.0  :
           timeframe.isweekly  ? timeframe.multiplier * 10080.0 :
-          timeframe.ismonthly ? timeframe.multiplier * 43200.0 : 1.0
+          timeframe.ismonthly ? timeframe.multiplier * 43200.0 : 1440.0
 bars_per_atr = 2.2
 holdTP1 = math.round(tp1Mult * bars_per_atr * tf_mins)
 holdTP2 = math.round(tp2Mult * bars_per_atr * tf_mins)
