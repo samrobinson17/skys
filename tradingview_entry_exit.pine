@@ -244,6 +244,11 @@ cell(col, row, txt, tc, sz, bg) =>
      text_color=tc, text_size=sz,
      bgcolor=bg, text_halign=text.align_left)
 
+// Top-level helpers (cannot be defined inside if blocks in Pine Script)
+dp = syminfo.mintick >= 0.01 ? 2 : syminfo.mintick >= 0.0001 ? 4 : 5
+p(v) => str.tostring(math.round(v, dp))
+rrStr(tp, sl, en) => str.tostring(math.round(math.abs(tp - en) / math.abs(en - sl), 1)) + ":1"
+
 if barstate.islast
 
     // ── Determine what to show (most recent signal) ──
@@ -267,11 +272,6 @@ if barstate.islast
     score     = isLong  ? longScore : isShort ? shortScore : 0
     barsAgo   = isLong  ? bar_index - lBar : isShort ? bar_index - sBar : 0
     minsAgo   = math.round(barsAgo * tf_mins)
-
-    dp = syminfo.mintick >= 0.01 ? 2 : syminfo.mintick >= 0.0001 ? 4 : 5
-
-    p(v) => str.tostring(math.round(v, dp))
-    rr(tp, sl, en) => str.tostring(math.round(math.abs(tp - en) / math.abs(en - sl), 1)) + ":1"
 
     // Row 0 — Direction header
     table.cell(panel, 0, 0, dirText, text_color=dirColor,
@@ -309,17 +309,17 @@ if barstate.islast
     // Row 7 — TP1
     tp1Color = isLong ? color.lime : color.new(color.orange, 0)
     cell(0, 7, "TP 1  (" + holdStr(holdTP1) + ")", color.silver, size.small, color.new(#001a00, 0))
-    cell(1, 7, noSig ? "—" : p(tp1Val) + "   R:R " + rr(tp1Val, slVal, entryVal),
+    cell(1, 7, noSig ? "—" : p(tp1Val) + "   R:R " + rrStr(tp1Val, slVal, entryVal),
      tp1Color, size.normal, color.new(#001a00, 0))
 
     // Row 8 — TP2
     cell(0, 8, "TP 2  (" + holdStr(holdTP2) + ")", color.silver, size.small, color.new(#002200, 0))
-    cell(1, 8, noSig ? "—" : p(tp2Val) + "   R:R " + rr(tp2Val, slVal, entryVal),
+    cell(1, 8, noSig ? "—" : p(tp2Val) + "   R:R " + rrStr(tp2Val, slVal, entryVal),
      tp1Color, size.normal, color.new(#002200, 0))
 
     // Row 9 — TP3
     cell(0, 9, "TP 3  (" + holdStr(holdTP3) + ")", color.silver, size.small, color.new(#003300, 0))
-    cell(1, 9, noSig ? "—" : p(tp3Val) + "   R:R " + rr(tp3Val, slVal, entryVal),
+    cell(1, 9, noSig ? "—" : p(tp3Val) + "   R:R " + rrStr(tp3Val, slVal, entryVal),
      tp1Color, size.normal, color.new(#003300, 0))
 
     // Row 10 — Divider
