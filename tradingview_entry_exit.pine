@@ -173,12 +173,6 @@ holdStr(mins) =>
     mins < 60 ? str.tostring(mins) + " min" : str.tostring(math.round(mins / 60.0, 1)) + " hr"
 
 // ─────────────────────────────────────────────
-// R:R helper
-// ─────────────────────────────────────────────
-rrStr(tp, sl, entry) =>
-    str.tostring(math.round(math.abs(tp - entry) / math.abs(entry - sl), 1)) + ":1"
-
-// ─────────────────────────────────────────────
 // SCORE BAR  (filled █ blocks)
 // ─────────────────────────────────────────────
 scoreBar(s, maxS) =>
@@ -246,8 +240,10 @@ cell(col, row, txt, tc, sz, bg) =>
 
 // Top-level helpers (cannot be defined inside if blocks in Pine Script)
 dp = syminfo.mintick >= 0.01 ? 2 : syminfo.mintick >= 0.0001 ? 4 : 5
-p(v) => str.tostring(math.round(v, dp))
-rrStr(tp, sl, en) => str.tostring(math.round(math.abs(tp - en) / math.abs(en - sl), 1)) + ":1"
+p(v)                => str.tostring(math.round(v, dp))
+rrStr(tp, sl, en)   => str.tostring(math.round(math.abs(tp - en) / math.abs(en - sl), 1)) + ":1"
+chk(v)              => v ? "✔" : "✘"
+chkC(v)             => v ? color.lime : color.new(color.red, 30)
 
 if barstate.islast
 
@@ -329,16 +325,6 @@ if barstate.islast
     // Row 11 — Header for live layer check
     cell(0, 11, "LIVE LAYERS", color.new(color.gray, 20), size.small, color.new(#111111, 0))
     cell(1, 11, "▲ LONG     ▼ SHORT", color.new(color.gray, 20), size.small, color.new(#111111, 0))
-
-    chk(v)  => v ? "✔" : "✘"
-    chkC(v) => v ? color.lime : color.new(color.red, 30)
-
-    rowData(lv, sv, lbl) =>
-        lc = chkC(lv == 1)
-        sc = chkC(sv == 1)
-        cell(0, 0, lbl, color.silver, size.tiny, color.new(#0d0d0d, 0))
-        cell(1, 0, chk(lv == 1) + "           " + chk(sv == 1),
-         lc, size.tiny, color.new(#0d0d0d, 0))
 
     // Rows 12-17 — Individual layers
     cell(0, 12, "EMA Stack",      color.silver, size.tiny, color.new(#0d0d0d, 0))
