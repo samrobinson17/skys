@@ -2,7 +2,7 @@
 // ═══════════════════════════════════════════════════════════════════
 //  INTRADAY SIGNAL PANEL + LIVE MARKET SCANNER  |  Pine Script v6
 //  Clean chart · Signal panel · Top 5 trades right now
-//  Optimised for: 1m · 3m · 5m · 15m charts
+//  Optimised for: 5m · 15m · 30m charts
 // ═══════════════════════════════════════════════════════════════════
 indicator("Intraday Signal Panel + Scanner", overlay=true, max_labels_count=100, max_lines_count=200)
 
@@ -56,7 +56,7 @@ adxMin  = input.int(20,    "Min ADX (20+ = trending)",  group=grpFilt, minval=5,
 
 // Higher Timeframe Trend Filter
 useHTF   = input.bool(true,  "Enable HTF Trend Filter",        group=grpHTF)
-htfTF    = input.timeframe("60", "HTF Timeframe (default 1H)", group=grpHTF)
+htfTF    = input.timeframe("240", "HTF Timeframe (default 4H)", group=grpHTF)
 htfFast  = input.int(21, "HTF Fast EMA",                       group=grpHTF, minval=1)
 htfSlow  = input.int(50, "HTF Slow EMA",                       group=grpHTF, minval=1)
 
@@ -88,6 +88,7 @@ sym7  = input.symbol("BINANCE:BTCUSDT",  "Market 7",  group=grpScan)
 sym8  = input.symbol("BINANCE:ETHUSDT",  "Market 8",  group=grpScan)
 sym9  = input.symbol("FOREXCOM:SPXUSD",  "Market 9",  group=grpScan)
 sym10 = input.symbol("NASDAQ:QQQ",       "Market 10", group=grpScan)
+scanTF = input.timeframe("30", "Scan Timeframe (default 30m)", group=grpScan)
 
 // ─────────────────────────────────────────────
 // CORE CALCS — current chart symbol
@@ -319,16 +320,16 @@ f_scan() =>
 // SCANNER — request.security() for each market
 // Must be at top level, not inside if blocks
 // ─────────────────────────────────────────────
-[sc1,  d1,  c1,  a1]  = request.security(sym1,  timeframe.period, f_scan())
-[sc2,  d2,  c2,  a2]  = request.security(sym2,  timeframe.period, f_scan())
-[sc3,  d3,  c3,  a3]  = request.security(sym3,  timeframe.period, f_scan())
-[sc4,  d4,  c4,  a4]  = request.security(sym4,  timeframe.period, f_scan())
-[sc5,  d5,  c5,  a5]  = request.security(sym5,  timeframe.period, f_scan())
-[sc6,  d6,  c6,  a6]  = request.security(sym6,  timeframe.period, f_scan())
-[sc7,  d7,  c7,  a7]  = request.security(sym7,  timeframe.period, f_scan())
-[sc8,  d8,  c8,  a8]  = request.security(sym8,  timeframe.period, f_scan())
-[sc9,  d9,  c9,  a9]  = request.security(sym9,  timeframe.period, f_scan())
-[sc10, d10, c10, a10] = request.security(sym10, timeframe.period, f_scan())
+[sc1,  d1,  c1,  a1]  = request.security(sym1,  scanTF, f_scan())
+[sc2,  d2,  c2,  a2]  = request.security(sym2,  scanTF, f_scan())
+[sc3,  d3,  c3,  a3]  = request.security(sym3,  scanTF, f_scan())
+[sc4,  d4,  c4,  a4]  = request.security(sym4,  scanTF, f_scan())
+[sc5,  d5,  c5,  a5]  = request.security(sym5,  scanTF, f_scan())
+[sc6,  d6,  c6,  a6]  = request.security(sym6,  scanTF, f_scan())
+[sc7,  d7,  c7,  a7]  = request.security(sym7,  scanTF, f_scan())
+[sc8,  d8,  c8,  a8]  = request.security(sym8,  scanTF, f_scan())
+[sc9,  d9,  c9,  a9]  = request.security(sym9,  scanTF, f_scan())
+[sc10, d10, c10, a10] = request.security(sym10, scanTF, f_scan())
 
 // ─────────────────────────────────────────────
 // ALL USER FUNCTIONS — must be at top level
