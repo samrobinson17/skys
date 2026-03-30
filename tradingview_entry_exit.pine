@@ -13,6 +13,7 @@ grpEMA  = "═══ EMA Settings ═══"
 grpTP   = "═══ TP / SL Settings ═══"
 grpFilt = "═══ Filters ═══"
 grpHTF  = "═══ Higher Timeframe Trend Filter ═══"
+grpLvl  = "═══ Key Levels & Entry Quality ═══"
 grpSess = "═══ Session (exchange time) ═══"
 grpDisp = "═══ Display ═══"
 grpScan = "═══ Market Scanner — change to your markets ═══"
@@ -38,15 +39,15 @@ macdF   = input.int(8,  "MACD Fast",   group=grpFilt, minval=1)
 macdSl  = input.int(17, "MACD Slow",   group=grpFilt, minval=1)
 macdSig = input.int(9,  "MACD Signal", group=grpFilt, minval=1)
 
-// TP/SL
+// TP/SL  — TP1 = 2:1 R:R minimum by default
 atrLen  = input.int(7,    "ATR Length",         group=grpTP, minval=1)
-slMult  = input.float(1.5,"SL ATR Multiplier",  group=grpTP, minval=0.2, step=0.1)
-tp1Mult = input.float(1.5,"TP1 ATR Multiplier", group=grpTP, minval=0.3, step=0.1)
-tp2Mult = input.float(2.0,"TP2 ATR Multiplier", group=grpTP, minval=0.5, step=0.1)
-tp3Mult = input.float(3.5,"TP3 ATR Multiplier", group=grpTP, minval=1.0, step=0.1)
+slMult  = input.float(1.0,"SL ATR Multiplier",  group=grpTP, minval=0.2, step=0.1)
+tp1Mult = input.float(2.0,"TP1 ATR Multiplier", group=grpTP, minval=0.3, step=0.1)
+tp2Mult = input.float(3.5,"TP2 ATR Multiplier", group=grpTP, minval=0.5, step=0.1)
+tp3Mult = input.float(6.0,"TP3 ATR Multiplier", group=grpTP, minval=1.0, step=0.1)
 
 // Filters
-minConf = input.int(4,    "Min Score to Signal (1-6)", group=grpFilt, minval=1, maxval=6)
+minConf = input.int(5,    "Min Score to Signal (1-6)", group=grpFilt, minval=1, maxval=6)
 volFilt = input.bool(true, "Require Above-Avg Volume", group=grpFilt)
 volMult = input.float(1.1, "Volume Multiplier",        group=grpFilt, step=0.1)
 useAdx  = input.bool(true, "Enable ADX Chop Filter",   group=grpFilt)
@@ -58,6 +59,13 @@ useHTF   = input.bool(true,  "Enable HTF Trend Filter",        group=grpHTF)
 htfTF    = input.timeframe("60", "HTF Timeframe (default 1H)", group=grpHTF)
 htfFast  = input.int(21, "HTF Fast EMA",                       group=grpHTF, minval=1)
 htfSlow  = input.int(50, "HTF Slow EMA",                       group=grpHTF, minval=1)
+
+// Key Levels & Entry Quality
+useDayBias  = input.bool(true,  "Day Bias Filter (above/below session open)", group=grpLvl)
+useKeyLvl   = input.bool(true,  "Reject entries heading into key levels",     group=grpLvl)
+keyLvlRange = input.float(0.4,  "Key Level Proximity (ATR multiplier)",       group=grpLvl, minval=0.1, step=0.1)
+useStrCand  = input.bool(true,  "Require Strong Entry Candle (body > 45%)",   group=grpLvl)
+showKeyLvls = input.bool(true,  "Show Previous Day H/L on chart",             group=grpLvl)
 
 // Session
 useSess = input.bool(true,          "Limit to Session",      group=grpSess)
@@ -108,6 +116,26 @@ volOk  = volFilt ? volume > volSMA * volMult : true
 adxOk  = not useAdx or adxVal > adxMin
 
 // ─────────────────────────────────────────────
+// KEY LEVELS — previous day H/L + session open
+// ─────────────────────────────────────────────
+prevDayHigh = request.security(syminfo.tickerid, "D", high[1])
+prevDayLow  = request.security(syminfo.tickerid, "D", low[1])
+sessOpen    = request.security(syminfo.tickerid, "D", open)
+
+// Day bias: bullish if price is above today's open, bearish if below
+dayBullish = close > sessOpen
+dayBearish = close < sessOpen
+dayBiasLongOk  = not useDayBias or dayBullish
+dayBiasShtOk   = not useDayBias or dayBearish
+
+// Clear of key level: reject longs heading into prev day high resistance
+//                     reject shorts heading into prev day low support
+nearPrevHigh = math.abs(close - prevDayHigh) <= atr * keyLvlRange
+nearPrevLow  = math.abs(close - prevDayLow)  <= atr * keyLvlRange
+keyLvlLongOk = not useKeyLvl or not nearPrevHigh
+keyLvlShtOk  = not useKeyLvl or not nearPrevLow
+
+// ─────────────────────────────────────────────
 // CANDLESTICK PATTERNS — current chart
 // ─────────────────────────────────────────────
 body   = math.abs(close - open)
@@ -127,6 +155,12 @@ bullMomentum = isBull and body > atr * 0.7 and close > ema9
 bearMomentum = isBear and body > atr * 0.7 and close < ema9
 bullPattern  = bullEngulf or hammer or bullPin or bullMomentum
 bearPattern  = bearEngulf or shootStar or bearPin or bearMomentum
+
+// Strong candle: body > 45% of candle range (rules out doji/indecision entries)
+strongBull = isBull and candle > 0 and (body / candle) >= 0.45
+strongBear = isBear and candle > 0 and (body / candle) >= 0.45
+strCandLongOk = not useStrCand or strongBull or bullPattern
+strCandShtOk  = not useStrCand or strongBear or bearPattern
 
 // ─────────────────────────────────────────────
 // CONFLUENCE SCORING — current chart (6 layers)
@@ -162,9 +196,11 @@ htfDowntrend = htfEmaFast < htfEmaSlow
 htfLongOk  = not useHTF or htfUptrend
 htfShortOk = not useHTF or htfDowntrend
 
-longSignal  = longScore  >= minConf and volOk and adxOk and inSession and htfLongOk
+longSignal  = longScore  >= minConf and volOk and adxOk and inSession
+             and htfLongOk and dayBiasLongOk and keyLvlLongOk and strCandLongOk
              and not (longScore[1]  >= minConf and volOk[1])
-shortSignal = shortScore >= minConf and volOk and adxOk and inSession and htfShortOk
+shortSignal = shortScore >= minConf and volOk and adxOk and inSession
+             and htfShortOk and dayBiasShtOk and keyLvlShtOk and strCandShtOk
              and not (shortScore[1] >= minConf and volOk[1])
 
 // ─────────────────────────────────────────────
@@ -185,6 +221,8 @@ var int   sBar   = na
 var string lastDir = "NONE"
 var bool  lTP1Hit = false
 var bool  sTP1Hit = false
+var int   lScore  = 0
+var int   sScore  = 0
 
 if longSignal
     lEntry  := close
@@ -195,6 +233,7 @@ if longSignal
     lBar    := bar_index
     lastDir := "LONG"
     lTP1Hit := false
+    lScore  := longScore
 
 if shortSignal
     sEntry  := close
@@ -205,6 +244,7 @@ if shortSignal
     sBar    := bar_index
     lastDir := "SHORT"
     sTP1Hit := false
+    sScore  := shortScore
 
 // Track breakeven trigger (TP1 reached since last signal)
 if lastDir == "LONG"  and not na(lTP1) and high >= lTP1
@@ -320,7 +360,7 @@ shortSym(s) =>
     array.size(parts) > 1 ? array.get(parts, 1) : s
 
 // Signal panel table (top-left)
-var table panel = table.new(position.top_left, 2, 24,
+var table panel = table.new(position.top_left, 2, 28,
  bgcolor      = color.new(#0d0d0d, 10),
  border_color = color.new(color.gray, 60), border_width = 1,
  frame_color  = color.new(color.gray, 30), frame_width  = 2)
@@ -347,6 +387,9 @@ scCell(col, row, txt, tc, sz, bg) =>
 // ─────────────────────────────────────────────
 // PLOTS
 // ─────────────────────────────────────────────
+plot(showKeyLvls ? prevDayHigh : na, "Prev Day High", color=color.new(color.yellow, 20), linewidth=1, style=plot.style_stepline)
+plot(showKeyLvls ? prevDayLow  : na, "Prev Day Low",  color=color.new(color.yellow, 20), linewidth=1, style=plot.style_stepline)
+plot(showKeyLvls ? sessOpen    : na, "Session Open",  color=color.new(color.white,  50), linewidth=1, style=plot.style_stepline)
 plot(showEMAs ? ema5  : na, "EMA 5",  color=color.new(color.aqua,   0), linewidth=1)
 plot(showEMAs ? ema9  : na, "EMA 9",  color=color.new(color.yellow, 0), linewidth=1)
 plot(showEMAs ? ema21 : na, "EMA 21", color=color.new(color.orange, 0), linewidth=2)
@@ -401,7 +444,7 @@ if barstate.islast
     tp2Val   = isLong  ? lTP2   : isShort ? sTP2   : na
     tp3Val   = isLong  ? lTP3   : isShort ? sTP3   : na
     slVal    = isLong  ? lSL    : isShort ? sSL    : na
-    score    = isLong  ? longScore : isShort ? shortScore : 0
+    score    = isLong  ? lScore : isShort ? sScore : 0
     barsAgo  = isLong  ? bar_index - lBar : isShort ? bar_index - sBar : 0
     minsAgo  = math.round(barsAgo * tf_mins)
 
@@ -505,8 +548,31 @@ if barstate.islast
     cell(0, 22, "BREAKEVEN", color.silver, size.tiny,   beBg)
     cell(1, 22, beText,      beColor,      size.small,  beBg)
 
-    cell(0, 23, "", color.gray, size.tiny, color.new(#0d0d0d,0))
-    cell(1, 23, "", color.gray, size.tiny, color.new(#0d0d0d,0))
+    cell(0, 23, "─────────────",            color.new(color.gray,50), size.tiny, color.new(#0d0d0d,0))
+    cell(1, 23, "─────────────────────────", color.new(color.gray,50), size.tiny, color.new(#0d0d0d,0))
+
+    cell(0, 24, "TRADE QUALITY", color.new(color.gray,20), size.small, color.new(#111111,0))
+    cell(1, 24, "",               color.new(color.gray,20), size.small, color.new(#111111,0))
+
+    biasOk  = isLong ? dayBullish : isShort ? dayBearish : false
+    biasTxt = isLong  ? (dayBullish ? "✔ Above session open" : "✘ Below session open") :
+              isShort ? (dayBearish ? "✔ Below session open" : "✘ Above session open") : "—"
+    biasClr = biasOk ? color.lime : color.red
+    cell(0, 25, "Day Bias",  color.silver, size.tiny, color.new(#0d0d0d,0))
+    cell(1, 25, biasTxt,     biasClr,      size.tiny, color.new(#0d0d0d,0))
+
+    pdHTxt  = "Prev Day H: " + p(prevDayHigh) + "  L: " + p(prevDayLow)
+    pdHClr  = nearPrevHigh or nearPrevLow ? color.red : color.lime
+    pdHNote = nearPrevHigh or nearPrevLow ? "  ← NEAR LEVEL" : "  ✔ Clear"
+    cell(0, 26, "Key Levels", color.silver, size.tiny, color.new(#0d0d0d,0))
+    cell(1, 26, pdHTxt + pdHNote, pdHClr,  size.tiny, color.new(#0d0d0d,0))
+
+    scBull   = isLong  ? (strongBull ? "✔ Strong bull body" : bullPattern ? "✔ Bull pattern" : "✘ Weak candle") : "—"
+    scBear   = isShort ? (strongBear ? "✔ Strong bear body" : bearPattern ? "✔ Bear pattern" : "✘ Weak candle") : "—"
+    scTxt    = isLong ? scBull : isShort ? scBear : "—"
+    scClr    = (isLong and (strongBull or bullPattern)) or (isShort and (strongBear or bearPattern)) ? color.lime : color.red
+    cell(0, 27, "Entry Candle", color.silver, size.tiny, color.new(#0d0d0d,0))
+    cell(1, 27, scTxt,          scClr,        size.tiny, color.new(#0d0d0d,0))
 
     // ── SCANNER TABLE ─────────────────────────
     // Header row
