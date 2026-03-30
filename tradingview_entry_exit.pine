@@ -49,6 +49,9 @@ tp3Mult = input.float(3.5,"TP3 ATR Multiplier", group=grpTP, minval=1.0, step=0.
 minConf = input.int(4,    "Min Score to Signal (1-6)", group=grpFilt, minval=1, maxval=6)
 volFilt = input.bool(true, "Require Above-Avg Volume", group=grpFilt)
 volMult = input.float(1.1, "Volume Multiplier",        group=grpFilt, step=0.1)
+useAdx  = input.bool(true, "Enable ADX Chop Filter",   group=grpFilt)
+adxLen  = input.int(14,    "ADX Length",                group=grpFilt, minval=1)
+adxMin  = input.int(20,    "Min ADX (20+ = trending)",  group=grpFilt, minval=5, maxval=50)
 
 // Higher Timeframe Trend Filter
 useHTF   = input.bool(true,  "Enable HTF Trend Filter",        group=grpHTF)
@@ -101,6 +104,9 @@ atr    = ta.atr(atrLen)
 volSMA = ta.sma(volume, 20)
 volOk  = volFilt ? volume > volSMA * volMult : true
 
+[_, _, adxVal] = ta.dmi(adxLen, adxLen)
+adxOk  = not useAdx or adxVal > adxMin
+
 // ─────────────────────────────────────────────
 // CANDLESTICK PATTERNS — current chart
 // ─────────────────────────────────────────────
@@ -147,9 +153,9 @@ shortScore = shortS1 + shortS2 + shortS3 + shortS4 + shortS5 + shortS6
 htfLongOk  = not useHTF or htfUptrend
 htfShortOk = not useHTF or htfDowntrend
 
-longSignal  = longScore  >= minConf and volOk and inSession and htfLongOk
+longSignal  = longScore  >= minConf and volOk and adxOk and inSession and htfLongOk
              and not (longScore[1]  >= minConf and volOk[1])
-shortSignal = shortScore >= minConf and volOk and inSession and htfShortOk
+shortSignal = shortScore >= minConf and volOk and adxOk and inSession and htfShortOk
              and not (shortScore[1] >= minConf and volOk[1])
 
 // ─────────────────────────────────────────────
@@ -168,6 +174,8 @@ var float sTP3   = na
 var int   lBar   = na
 var int   sBar   = na
 var string lastDir = "NONE"
+var bool  lTP1Hit = false
+var bool  sTP1Hit = false
 
 if longSignal
     lEntry  := close
@@ -177,6 +185,7 @@ if longSignal
     lTP3    := close + atr * tp3Mult
     lBar    := bar_index
     lastDir := "LONG"
+    lTP1Hit := false
 
 if shortSignal
     sEntry  := close
@@ -186,6 +195,13 @@ if shortSignal
     sTP3    := close - atr * tp3Mult
     sBar    := bar_index
     lastDir := "SHORT"
+    sTP1Hit := false
+
+// Track breakeven trigger (TP1 reached since last signal)
+if lastDir == "LONG"  and not na(lTP1) and high >= lTP1
+    lTP1Hit := true
+if lastDir == "SHORT" and not na(sTP1) and low  <= sTP1
+    sTP1Hit := true
 
 // ─────────────────────────────────────────────
 // HOLD TIME ESTIMATE
@@ -303,7 +319,7 @@ shortSym(s) =>
     array.size(parts) > 1 ? array.get(parts, 1) : s
 
 // Signal panel table (top-left)
-var table panel = table.new(position.top_left, 2, 20,
+var table panel = table.new(position.top_left, 2, 24,
  bgcolor      = color.new(#0d0d0d, 10),
  border_color = color.new(color.gray, 60), border_width = 1,
  frame_color  = color.new(color.gray, 30), frame_width  = 2)
@@ -468,6 +484,29 @@ if barstate.islast
     cell(0, 19, htfLabel,  color.silver,  size.tiny,  htfBg)
     cell(1, 19, htfActive, htfTrendClr,   size.small, htfBg)
 
+    adxRnd  = math.round(adxVal, 1)
+    adxTxt  = adxVal > adxMin ? "✔ TRENDING (" + str.tostring(adxRnd) + ")" :
+                                 "✘ CHOPPY ("   + str.tostring(adxRnd) + ") — skip"
+    adxClr  = adxVal > adxMin ? color.lime : color.red
+    adxBg   = adxVal > adxMin ? color.new(#001a00,0) : color.new(#1a0000,0)
+    adxFilt = useAdx ? adxTxt : adxTxt + "  (filter OFF)"
+    cell(0, 20, "ADX Chop", color.silver, size.tiny,  color.new(#0d0d0d,0))
+    cell(1, 20, adxFilt,    adxClr,       size.tiny,  adxBg)
+
+    cell(0, 21, "─────────────",            color.new(color.gray,50), size.tiny, color.new(#0d0d0d,0))
+    cell(1, 21, "─────────────────────────", color.new(color.gray,50), size.tiny, color.new(#0d0d0d,0))
+
+    tp1Hit  = isLong ? lTP1Hit : isShort ? sTP1Hit : false
+    beText  = tp1Hit  ? "⚡ TP1 HIT — MOVE SL TO ENTRY NOW" :
+              noSig   ? "—" : "Watching... (fires when TP1 hit)"
+    beColor = tp1Hit  ? color.yellow : color.new(color.gray, 50)
+    beBg    = tp1Hit  ? color.new(#2a1f00, 0) : color.new(#0d0d0d, 0)
+    cell(0, 22, "BREAKEVEN", color.silver, size.tiny,   beBg)
+    cell(1, 22, beText,      beColor,      size.small,  beBg)
+
+    cell(0, 23, "", color.gray, size.tiny, color.new(#0d0d0d,0))
+    cell(1, 23, "", color.gray, size.tiny, color.new(#0d0d0d,0))
+
     // ── SCANNER TABLE ─────────────────────────
     // Header row
     scCell(0, 0, "#",      color.white, size.small, color.new(#1a1a2e, 0))
@@ -560,8 +599,8 @@ if barstate.islast
         dirClr  = isLg ? color.lime : color.red
         bgClr   = isLg ? color.new(#001a00, 0) : color.new(#1a0000, 0)
         entry_  = cl_val
-        tp1_    = isLg ? cl_val + at_val * 1.0 : cl_val - at_val * 1.0
-        sl_     = isLg ? cl_val - at_val * 0.8 : cl_val + at_val * 0.8
+        tp1_    = isLg ? cl_val + at_val * tp1Mult : cl_val - at_val * tp1Mult
+        sl_     = isLg ? cl_val - at_val * slMult  : cl_val + at_val * slMult
         row     = rank + 1
 
         scCell(0, row, str.tostring(rank + 1),                      color.white, size.small, color.new(#111111, 0))
@@ -576,3 +615,5 @@ if barstate.islast
 // ─────────────────────────────────────────────
 alertcondition(longSignal,  "▲ LONG Entry",  "LONG entry on {{ticker}} ({{interval}}). Check panel for TP/SL.")
 alertcondition(shortSignal, "▼ SHORT Entry", "SHORT entry on {{ticker}} ({{interval}}). Check panel for TP/SL.")
+alertcondition(not lTP1Hit[1] and lTP1Hit, "⚡ LONG TP1 Hit — Move SL to Entry",  "LONG TP1 reached on {{ticker}}. Move stop loss to entry (breakeven).")
+alertcondition(not sTP1Hit[1] and sTP1Hit, "⚡ SHORT TP1 Hit — Move SL to Entry", "SHORT TP1 reached on {{ticker}}. Move stop loss to entry (breakeven).")
