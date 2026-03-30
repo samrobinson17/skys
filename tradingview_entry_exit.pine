@@ -12,6 +12,7 @@ indicator("Intraday Signal Panel + Scanner", overlay=true, max_labels_count=100,
 grpEMA  = "═══ EMA Settings ═══"
 grpTP   = "═══ TP / SL Settings ═══"
 grpFilt = "═══ Filters ═══"
+grpHTF  = "═══ Higher Timeframe Trend Filter ═══"
 grpSess = "═══ Session (exchange time) ═══"
 grpDisp = "═══ Display ═══"
 grpScan = "═══ Market Scanner — change to your markets ═══"
@@ -39,15 +40,21 @@ macdSig = input.int(9,  "MACD Signal", group=grpFilt, minval=1)
 
 // TP/SL
 atrLen  = input.int(7,    "ATR Length",         group=grpTP, minval=1)
-slMult  = input.float(0.8,"SL ATR Multiplier",  group=grpTP, minval=0.2, step=0.1)
-tp1Mult = input.float(1.0,"TP1 ATR Multiplier", group=grpTP, minval=0.3, step=0.1)
+slMult  = input.float(1.5,"SL ATR Multiplier",  group=grpTP, minval=0.2, step=0.1)
+tp1Mult = input.float(1.5,"TP1 ATR Multiplier", group=grpTP, minval=0.3, step=0.1)
 tp2Mult = input.float(2.0,"TP2 ATR Multiplier", group=grpTP, minval=0.5, step=0.1)
 tp3Mult = input.float(3.5,"TP3 ATR Multiplier", group=grpTP, minval=1.0, step=0.1)
 
 // Filters
-minConf = input.int(3,    "Min Score to Signal (1-6)", group=grpFilt, minval=1, maxval=6)
+minConf = input.int(4,    "Min Score to Signal (1-6)", group=grpFilt, minval=1, maxval=6)
 volFilt = input.bool(true, "Require Above-Avg Volume", group=grpFilt)
 volMult = input.float(1.1, "Volume Multiplier",        group=grpFilt, step=0.1)
+
+// Higher Timeframe Trend Filter
+useHTF   = input.bool(true,  "Enable HTF Trend Filter",        group=grpHTF)
+htfTF    = input.timeframe("60", "HTF Timeframe (default 1H)", group=grpHTF)
+htfFast  = input.int(21, "HTF Fast EMA",                       group=grpHTF, minval=1)
+htfSlow  = input.int(50, "HTF Slow EMA",                       group=grpHTF, minval=1)
 
 // Session
 useSess = input.bool(true,          "Limit to Session",      group=grpSess)
@@ -137,9 +144,12 @@ shortScore = shortS1 + shortS2 + shortS3 + shortS4 + shortS5 + shortS6
 // ─────────────────────────────────────────────
 // SIGNALS — current chart
 // ─────────────────────────────────────────────
-longSignal  = longScore  >= minConf and volOk and inSession
+htfLongOk  = not useHTF or htfUptrend
+htfShortOk = not useHTF or htfDowntrend
+
+longSignal  = longScore  >= minConf and volOk and inSession and htfLongOk
              and not (longScore[1]  >= minConf and volOk[1])
-shortSignal = shortScore >= minConf and volOk and inSession
+shortSignal = shortScore >= minConf and volOk and inSession and htfShortOk
              and not (shortScore[1] >= minConf and volOk[1])
 
 // ─────────────────────────────────────────────
@@ -244,6 +254,14 @@ f_scan() =>
 // SCANNER — request.security() for each market
 // Must be at top level, not inside if blocks
 // ─────────────────────────────────────────────
+// ─────────────────────────────────────────────
+// HIGHER TIMEFRAME TREND FILTER
+// ─────────────────────────────────────────────
+htfEmaFast = request.security(syminfo.tickerid, htfTF, ta.ema(close, htfFast))
+htfEmaSlow = request.security(syminfo.tickerid, htfTF, ta.ema(close, htfSlow))
+htfUptrend   = htfEmaFast > htfEmaSlow
+htfDowntrend = htfEmaFast < htfEmaSlow
+
 [sc1,  d1,  c1,  a1]  = request.security(sym1,  timeframe.period, f_scan())
 [sc2,  d2,  c2,  a2]  = request.security(sym2,  timeframe.period, f_scan())
 [sc3,  d3,  c3,  a3]  = request.security(sym3,  timeframe.period, f_scan())
@@ -285,7 +303,7 @@ shortSym(s) =>
     array.size(parts) > 1 ? array.get(parts, 1) : s
 
 // Signal panel table (top-left)
-var table panel = table.new(position.top_left, 2, 18,
+var table panel = table.new(position.top_left, 2, 20,
  bgcolor      = color.new(#0d0d0d, 10),
  border_color = color.new(color.gray, 60), border_width = 1,
  frame_color  = color.new(color.gray, 30), frame_width  = 2)
@@ -438,6 +456,17 @@ if barstate.islast
     cell(0, 17, "Pattern/Burst", color.silver, size.tiny, color.new(#0d0d0d,0))
     cell(1, 17, chk(longS6==1) + "  Long   " + chk(shortS6==1) + "  Short",
      longS6==1 ? color.lime : color.new(color.red,30), size.tiny, color.new(#0d0d0d,0))
+
+    cell(0, 18, "─────────────",           color.new(color.gray,50), size.tiny, color.new(#0d0d0d,0))
+    cell(1, 18, "─────────────────────────",color.new(color.gray,50), size.tiny, color.new(#0d0d0d,0))
+
+    htfLabel = "HTF Trend (" + htfTF + "m)"
+    htfTrendTxt = htfUptrend ? "▲ UP — longs only" : htfDowntrend ? "▼ DOWN — shorts only" : "◆ FLAT"
+    htfTrendClr = htfUptrend ? color.lime : htfDowntrend ? color.red : color.gray
+    htfBg       = htfUptrend ? color.new(#001a00,0) : htfDowntrend ? color.new(#1a0000,0) : color.new(#111111,0)
+    htfActive   = useHTF ? htfTrendTxt : htfTrendTxt + "  (filter OFF)"
+    cell(0, 19, htfLabel,  color.silver,  size.tiny,  htfBg)
+    cell(1, 19, htfActive, htfTrendClr,   size.small, htfBg)
 
     // ── SCANNER TABLE ─────────────────────────
     // Header row
