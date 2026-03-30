@@ -148,6 +148,15 @@ shortS6 = bearPattern ? 1 : 0
 shortScore = shortS1 + shortS2 + shortS3 + shortS4 + shortS5 + shortS6
 
 // ─────────────────────────────────────────────
+// HIGHER TIMEFRAME TREND FILTER
+// Must be before SIGNALS so htfUptrend/htfDowntrend are defined
+// ─────────────────────────────────────────────
+htfEmaFast   = request.security(syminfo.tickerid, htfTF, ta.ema(close, htfFast))
+htfEmaSlow   = request.security(syminfo.tickerid, htfTF, ta.ema(close, htfSlow))
+htfUptrend   = htfEmaFast > htfEmaSlow
+htfDowntrend = htfEmaFast < htfEmaSlow
+
+// ─────────────────────────────────────────────
 // SIGNALS — current chart
 // ─────────────────────────────────────────────
 htfLongOk  = not useHTF or htfUptrend
@@ -270,14 +279,6 @@ f_scan() =>
 // SCANNER — request.security() for each market
 // Must be at top level, not inside if blocks
 // ─────────────────────────────────────────────
-// ─────────────────────────────────────────────
-// HIGHER TIMEFRAME TREND FILTER
-// ─────────────────────────────────────────────
-htfEmaFast = request.security(syminfo.tickerid, htfTF, ta.ema(close, htfFast))
-htfEmaSlow = request.security(syminfo.tickerid, htfTF, ta.ema(close, htfSlow))
-htfUptrend   = htfEmaFast > htfEmaSlow
-htfDowntrend = htfEmaFast < htfEmaSlow
-
 [sc1,  d1,  c1,  a1]  = request.security(sym1,  timeframe.period, f_scan())
 [sc2,  d2,  c2,  a2]  = request.security(sym2,  timeframe.period, f_scan())
 [sc3,  d3,  c3,  a3]  = request.security(sym3,  timeframe.period, f_scan())
