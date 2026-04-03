@@ -4,7 +4,7 @@
 //  Clean chart · Signal panel · Top 5 trades right now
 //  Optimised for: 5m · 15m · 30m charts
 // ═══════════════════════════════════════════════════════════════════
-indicator("Intraday Signal Panel + Scanner", overlay=true, max_labels_count=500, max_lines_count=200, max_boxes_count=500)
+indicator("Intraday Signal Panel + Scanner", overlay=true, max_labels_count=500, max_lines_count=200, max_boxes_count=500, max_polylines_count=10)
 
 // ─────────────────────────────────────────────
 // INPUT GROUPS
@@ -108,8 +108,7 @@ liqSep       = liqSepBins ? 1 : 0
 var _liqLvlBoxes  = array.new<box>()
 var _liqProfBoxes = array.new<box>()
 var _liqLabels    = array.new<label>()
-var polyline _liqSellLine = na
-var polyline _liqBuyLine  = na
+var _liqPolylines = array.new<polyline>()
 
 // ─────────────────────────────────────────────
 // CORE CALCS — current chart symbol
@@ -474,12 +473,9 @@ if barstate.islast
     for lbl in _liqLabels
         lbl.delete()
     _liqLabels.clear()
-    if not na(_liqSellLine)
-        _liqSellLine.delete()
-        _liqSellLine := na
-    if not na(_liqBuyLine)
-        _liqBuyLine.delete()
-        _liqBuyLine := na
+    for pl in _liqPolylines
+        pl.delete()
+    _liqPolylines.clear()
 
     if showLiqMap
         liqSrcVals   = array.new<float>()
@@ -581,8 +577,10 @@ if barstate.islast
                 if hi > mid and lo < mid
                     bx.set_left(bar_index - i + 1)
 
-        _liqSellLine := polyline.new(liqSellPts, line_color = colorSellVol, force_overlay = true, line_width = 2)
-        _liqBuyLine  := polyline.new(liqBuyPts,  line_color = colorBuyVol,  force_overlay = true, line_width = 2)
+        if liqSellPts.size() > 1
+            _liqPolylines.push(polyline.new(liqSellPts, line_color = colorSellVol, force_overlay = true, line_width = 2))
+        if liqBuyPts.size() > 1
+            _liqPolylines.push(polyline.new(liqBuyPts,  line_color = colorBuyVol,  force_overlay = true, line_width = 2))
 
     // ── SIGNAL PANEL ──────────────────────────
     isLong  = lastDir == "LONG"
