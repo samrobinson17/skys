@@ -17,6 +17,7 @@ grpLvl  = "═══ Key Levels & Entry Quality ═══"
 grpSess = "═══ Session (exchange time) ═══"
 grpDisp = "═══ Display ═══"
 grpScan = "═══ Market Scanner — change to your markets ═══"
+grpLiq  = "═══ Liquidity Volume Profile ═══"
 
 // EMA
 ema5Len  = input.int(5,  "EMA 5",  group=grpEMA, minval=1)
@@ -90,6 +91,29 @@ sym9  = input.symbol("FOREXCOM:SPXUSD",  "Market 9",  group=grpScan)
 sym10 = input.symbol("NASDAQ:QQQ",       "Market 10", group=grpScan)
 scanTF = input.timeframe("30", "Scan Timeframe (default 30m)", group=grpScan)
 
+// Liquidity Volume Profile
+useLiq       = input.bool(true,  "Enable Liquidity Volume Filter",  group=grpLiq)
+liqLookback  = input.int(50,     "Volume Lookback (bars)",          group=grpLiq, minval=10, maxval=500)
+showLiqMap   = input.bool(true,  "Show Liquidity Map on Chart",     group=grpLiq)
+liqVizBars   = input.int(200,    "Map Lookback (bars)",             group=grpLiq, minval=50, maxval=500)
+liqBins      = input.int(90,     "Map Bins",                        group=grpLiq, minval=10, maxval=200)
+liqSepBins   = input.bool(true,  "Separate Bins",                   group=grpLiq)
+colorBuyVol  = input.color(color.rgb(14,  236, 165), "Buy Volume Color",  group=grpLiq)
+colorSellVol = input.color(color.rgb(236, 14,  165), "Sell Volume Color", group=grpLiq)
+liqSep       = liqSepBins ? 1 : 0
+
+// ─────────────────────────────────────────────
+// LIQUIDITY PROFILE DRAW TYPE
+// ─────────────────────────────────────────────
+type ProfileDraw
+    array<box>    profileBoxes
+    array<box>    levelBoxes
+    polyline      sellLine
+    polyline      buyLine
+    array<label>  volumeLabels
+
+var allProfiles = array.new<ProfileDraw>()
+
 // ─────────────────────────────────────────────
 // CORE CALCS — current chart symbol
 // ─────────────────────────────────────────────
@@ -115,6 +139,17 @@ volOk  = volFilt ? volume > volSMA * volMult : true
 
 [_, _, adxVal] = ta.dmi(adxLen, adxLen)
 adxOk  = not useAdx or adxVal > adxMin
+
+// ─────────────────────────────────────────────
+// LIQUIDITY — per-bar rolling volume split (signal filter)
+// liqPriceRef must be at script scope so [i] access works in the map
+// ─────────────────────────────────────────────
+liqPriceStd = ta.stdev(close, 25) * 2
+liqPriceRef = close > open ? low - liqPriceStd : high + liqPriceStd
+liqBullVol  = math.sum(volume * (close > open ? 1.0 : 0.0), liqLookback)
+liqBearVol  = math.sum(volume * (close < open ? 1.0 : 0.0), liqLookback)
+liqLongOk   = not useLiq or liqBullVol > liqBearVol
+liqShortOk  = not useLiq or liqBearVol > liqBullVol
 
 // ─────────────────────────────────────────────
 // KEY LEVELS — previous day H/L + session open
@@ -199,9 +234,11 @@ htfShortOk = not useHTF or htfDowntrend
 
 longSignal  = longScore  >= minConf and volOk and adxOk and inSession
              and htfLongOk and dayBiasLongOk and keyLvlLongOk and strCandLongOk
+             and liqLongOk
              and not (longScore[1]  >= minConf and volOk[1])
 shortSignal = shortScore >= minConf and volOk and adxOk and inSession
              and htfShortOk and dayBiasShtOk and keyLvlShtOk and strCandShtOk
+             and liqShortOk
              and not (shortScore[1] >= minConf and volOk[1])
 
 // ─────────────────────────────────────────────
@@ -361,7 +398,7 @@ shortSym(s) =>
     array.size(parts) > 1 ? array.get(parts, 1) : s
 
 // Signal panel table (top-left)
-var table panel = table.new(position.top_left, 2, 28,
+var table panel = table.new(position.top_left, 2, 30,
  bgcolor      = color.new(#0d0d0d, 10),
  border_color = color.new(color.gray, 60), border_width = 1,
  frame_color  = color.new(color.gray, 30), frame_width  = 2)
@@ -428,6 +465,126 @@ if showTP and shortSignal
 // SIGNAL PANEL (top-left) + SCANNER TABLE (bottom-left)
 // ─────────────────────────────────────────────
 if barstate.islast
+
+    // ── LIQUIDITY VOLUME PROFILE (ChartPrime Liquidity Pro Map) ───────
+    // Always clear previous drawings first (handles show/hide toggle)
+    for prf in allProfiles
+        for bx in prf.levelBoxes
+            bx.delete()
+        for bx in prf.profileBoxes
+            bx.delete()
+        for lbl in prf.volumeLabels
+            lbl.delete()
+        prf.sellLine.delete()
+        prf.buyLine.delete()
+    allProfiles.clear()
+
+    if showLiqMap
+        liqSrcVals   = array.new<float>()
+        liqSellPts   = array.new<chart.point>()
+        liqBuyPts    = array.new<chart.point>()
+        liqVolBins   = array.new<float>(liqBins, 0.0)
+        liqLvlBoxes  = array.new<box>()
+        liqProfBoxes = array.new<box>()
+        liqLabels    = array.new<label>()
+
+        liqPocSellFnd = false
+        liqPocBuyFnd  = false
+        liqBStart     = bar_index + 2
+        liqOff        = 50
+
+        liqTotUpperW  = 0
+        liqRunUpperW  = 0
+        liqMaxUpperW  = 0
+        liqTotSellVol = 0.0
+        liqTotLowerW  = 0
+        liqRunLowerW  = 0
+        liqMaxLowerW  = 0
+        liqTotBuyVol  = 0.0
+
+        // Collect historical price reference series
+        for i = 0 to liqVizBars - 1
+            liqSrcVals.push(liqPriceRef[i])
+
+        liqMinPx = liqSrcVals.min()
+        liqMaxPx = liqSrcVals.max()
+        liqStep  = (liqMaxPx - liqMinPx) / liqBins
+
+        // Assign volume into bins
+        for bar = 0 to liqVizBars - 1
+            for bin = 0 to liqBins - 1
+                bLow = liqMinPx + liqStep * bin
+                bMid = bLow + liqStep / 2
+                if math.abs(liqPriceRef[bar] - bMid) <= liqStep and not (math.abs(close - bMid) < liqStep * 2)
+                    liqVolBins.set(bin, liqVolBins.get(bin) + volume[bar])
+
+        // Split bins into buy (below close) vs sell (above close)
+        for bin = 0 to liqBins - 1
+            bLow = liqMinPx + liqStep * bin
+            bMid = bLow + liqStep / 2
+            bVal = liqVolBins.get(bin)
+            relW = int(bVal / liqVolBins.max() * liqOff)
+            if close < bMid
+                liqTotSellVol += bVal
+                liqTotUpperW  += relW
+                liqMaxUpperW  := math.max(liqMaxUpperW, relW)
+            else
+                liqTotBuyVol  += bVal
+                liqTotLowerW  += relW
+                liqMaxLowerW  := math.max(liqMaxLowerW, relW)
+
+        // Draw profile boxes and polyline points
+        for bin = 0 to liqBins - 1
+            bLow  = liqMinPx + liqStep * bin
+            bHigh = bLow + liqStep
+            bMid  = bLow + liqStep / 2
+            bVal  = liqVolBins.get(bin)
+            relW  = int(bVal / liqVolBins.max() * liqOff)
+
+            if not (math.abs(close - bMid) < liqStep * 2)
+                if close < bMid
+                    liqRunUpperW  += int(bVal / liqVolBins.max() * liqMaxUpperW)
+                    sSt = liqTotUpperW > 0 ? math.round(liqRunUpperW / liqTotUpperW * 50) : 0
+                    cp  = chart.point.from_index(liqBStart + sSt, bHigh)
+                    liqSellPts.push(cp)
+                    if relW == liqMaxUpperW and not liqPocSellFnd
+                        liqLabels.push(label.new(liqBStart + relW, bMid, style = label.style_label_left, color = color(na), text = "◀ POC  " + str.tostring(bVal, format.volume), textcolor = colorSellVol))
+                        liqPocSellFnd := true
+                    if bin == liqBins - 1
+                        liqLabels.push(label.new(cp, style = label.style_label_lower_left, color = color(na), text = str.tostring(liqTotSellVol, format.volume) + "\n▼", textcolor = colorSellVol))
+                else
+                    liqRunLowerW  += int(bVal / liqVolBins.max() * liqMaxLowerW)
+                    sSt = liqTotLowerW > 0 ? math.round(liqMaxLowerW - (liqRunLowerW / liqTotLowerW * 50)) : 0
+                    cp  = chart.point.from_index(liqBStart + sSt, bLow)
+                    liqBuyPts.push(cp)
+                    if relW == liqMaxLowerW and not liqPocBuyFnd
+                        liqLabels.push(label.new(liqBStart + relW, bMid, style = label.style_label_left, color = color(na), text = "◀ POC  " + str.tostring(bVal, format.volume), textcolor = colorBuyVol))
+                        liqPocBuyFnd := true
+                    if bin == 0
+                        liqLabels.push(label.new(cp, style = label.style_label_upper_left, color = color(na), text = "▲\n" + str.tostring(liqTotBuyVol, format.volume), textcolor = colorBuyVol))
+
+                binClrProf = close < bMid
+                     ? color.from_gradient(relW, 0, liqMaxUpperW, color.rgb(255, 82, 82, 90), colorSellVol)
+                     : color.from_gradient(relW, 0, liqMaxLowerW, color.rgb(105, 255, 82, 90), colorBuyVol)
+                binClrLvl  = close < bMid
+                     ? color.from_gradient(relW, 0, liqMaxUpperW, color(na), colorSellVol)
+                     : color.from_gradient(relW, 0, liqMaxLowerW, color(na), colorBuyVol)
+
+                liqLvlBoxes.push(box.new(bar_index - liqVizBars - relW / 5, bHigh, bar_index, bLow, chart.bg_color, liqSep, bgcolor = binClrLvl))
+                liqProfBoxes.push(box.new(liqBStart, bHigh, liqBStart + relW, bLow, chart.bg_color, liqSep, bgcolor = binClrProf))
+
+        // Extend level boxes back to where price crossed them
+        for bx in liqLvlBoxes
+            for i = liqVizBars - 1 to 0
+                hi  = high[i]
+                lo  = low[i]
+                mid = math.avg(bx.get_top(), bx.get_bottom())
+                if hi > mid and lo < mid
+                    bx.set_left(bar_index - i + 1)
+
+        liqSellPoly = polyline.new(liqSellPts, line_color = colorSellVol, force_overlay = true, line_width = 2)
+        liqBuyPoly  = polyline.new(liqBuyPts,  line_color = colorBuyVol,  force_overlay = true, line_width = 2)
+        allProfiles.push(ProfileDraw.new(liqProfBoxes, liqLvlBoxes, liqSellPoly, liqBuyPoly, liqLabels))
 
     // ── SIGNAL PANEL ──────────────────────────
     isLong  = lastDir == "LONG"
@@ -574,6 +731,21 @@ if barstate.islast
     scClr    = (isLong and (strongBull or bullPattern)) or (isShort and (strongBear or bearPattern)) ? color.lime : color.red
     cell(0, 27, "Entry Candle", color.silver, size.tiny, color.new(#0d0d0d,0))
     cell(1, 27, scTxt,          scClr,        size.tiny, color.new(#0d0d0d,0))
+
+    cell(0, 28, "─────────────",            color.new(color.gray,50), size.tiny, color.new(#0d0d0d,0))
+    cell(1, 28, "─────────────────────────", color.new(color.gray,50), size.tiny, color.new(#0d0d0d,0))
+
+    liqTotal = liqBullVol + liqBearVol
+    liqBPct  = liqTotal > 0 ? math.round(liqBullVol / liqTotal * 100) : 50
+    liqSPct  = 100 - liqBPct
+    liqTxt   = liqBPct > liqSPct ?
+               "▲ BUY " + str.tostring(liqBPct) + "% vs " + str.tostring(liqSPct) + "% SELL" :
+               "▼ SELL " + str.tostring(liqSPct) + "% vs " + str.tostring(liqBPct) + "% BUY"
+    liqClr   = liqBPct > liqSPct ? color.lime : color.red
+    liqBg    = liqBPct > liqSPct ? color.new(#001a00,0) : color.new(#1a0000,0)
+    liqLbl   = useLiq ? liqTxt : liqTxt + "  (filter OFF)"
+    cell(0, 29, "Liq Volume",  color.silver, size.tiny,  color.new(#0d0d0d,0))
+    cell(1, 29, liqLbl,        liqClr,       size.small, liqBg)
 
     // ── SCANNER TABLE ─────────────────────────
     // Header row
