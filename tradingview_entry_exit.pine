@@ -4,7 +4,7 @@
 //  Clean chart · Signal panel · Top 5 trades right now
 //  Optimised for: 5m · 15m · 30m charts
 // ═══════════════════════════════════════════════════════════════════
-indicator("Intraday Signal Panel + Scanner", overlay=true, max_labels_count=100, max_lines_count=200)
+indicator("Intraday Signal Panel + Scanner", overlay=true, max_labels_count=500, max_lines_count=200, max_boxes_count=500)
 
 // ─────────────────────────────────────────────
 // INPUT GROUPS
@@ -103,16 +103,13 @@ colorSellVol = input.color(color.rgb(236, 14,  165), "Sell Volume Color", group=
 liqSep       = liqSepBins ? 1 : 0
 
 // ─────────────────────────────────────────────
-// LIQUIDITY PROFILE DRAW TYPE
+// LIQUIDITY PROFILE DRAW VARS (avoid UDT parser issues)
 // ─────────────────────────────────────────────
-type ProfileDraw
-    array<box>    profileBoxes
-    array<box>    levelBoxes
-    polyline      sellLine
-    polyline      buyLine
-    array<label>  volumeLabels
-
-var allProfiles = array.new<ProfileDraw>()
+var _liqLvlBoxes  = array.new<box>()
+var _liqProfBoxes = array.new<box>()
+var _liqLabels    = array.new<label>()
+var polyline _liqSellLine = na
+var polyline _liqBuyLine  = na
 
 // ─────────────────────────────────────────────
 // CORE CALCS — current chart symbol
@@ -468,25 +465,27 @@ if barstate.islast
 
     // ── LIQUIDITY VOLUME PROFILE (ChartPrime Liquidity Pro Map) ───────
     // Always clear previous drawings first (handles show/hide toggle)
-    for prf in allProfiles
-        for bx in prf.levelBoxes
-            bx.delete()
-        for bx in prf.profileBoxes
-            bx.delete()
-        for lbl in prf.volumeLabels
-            lbl.delete()
-        prf.sellLine.delete()
-        prf.buyLine.delete()
-    allProfiles.clear()
+    for bx in _liqLvlBoxes
+        bx.delete()
+    _liqLvlBoxes.clear()
+    for bx in _liqProfBoxes
+        bx.delete()
+    _liqProfBoxes.clear()
+    for lbl in _liqLabels
+        lbl.delete()
+    _liqLabels.clear()
+    if not na(_liqSellLine)
+        _liqSellLine.delete()
+        _liqSellLine := na
+    if not na(_liqBuyLine)
+        _liqBuyLine.delete()
+        _liqBuyLine := na
 
     if showLiqMap
         liqSrcVals   = array.new<float>()
         liqSellPts   = array.new<chart.point>()
         liqBuyPts    = array.new<chart.point>()
         liqVolBins   = array.new<float>(liqBins, 0.0)
-        liqLvlBoxes  = array.new<box>()
-        liqProfBoxes = array.new<box>()
-        liqLabels    = array.new<label>()
 
         liqPocSellFnd = false
         liqPocBuyFnd  = false
@@ -548,20 +547,20 @@ if barstate.islast
                     cp  = chart.point.from_index(liqBStart + sSt, bHigh)
                     liqSellPts.push(cp)
                     if relW == liqMaxUpperW and not liqPocSellFnd
-                        liqLabels.push(label.new(liqBStart + relW, bMid, style = label.style_label_left, color = color(na), text = "◀ POC  " + str.tostring(bVal, format.volume), textcolor = colorSellVol))
+                        _liqLabels.push(label.new(liqBStart + relW, bMid, style = label.style_label_left, color = color(na), text = "◀ POC  " + str.tostring(bVal, format.volume), textcolor = colorSellVol))
                         liqPocSellFnd := true
                     if bin == liqBins - 1
-                        liqLabels.push(label.new(cp, style = label.style_label_lower_left, color = color(na), text = str.tostring(liqTotSellVol, format.volume) + "\n▼", textcolor = colorSellVol))
+                        _liqLabels.push(label.new(cp, style = label.style_label_lower_left, color = color(na), text = str.tostring(liqTotSellVol, format.volume) + "\n▼", textcolor = colorSellVol))
                 else
                     liqRunLowerW  += int(bVal / liqVolBins.max() * liqMaxLowerW)
                     sSt = liqTotLowerW > 0 ? math.round(liqMaxLowerW - (liqRunLowerW / liqTotLowerW * 50)) : 0
                     cp  = chart.point.from_index(liqBStart + sSt, bLow)
                     liqBuyPts.push(cp)
                     if relW == liqMaxLowerW and not liqPocBuyFnd
-                        liqLabels.push(label.new(liqBStart + relW, bMid, style = label.style_label_left, color = color(na), text = "◀ POC  " + str.tostring(bVal, format.volume), textcolor = colorBuyVol))
+                        _liqLabels.push(label.new(liqBStart + relW, bMid, style = label.style_label_left, color = color(na), text = "◀ POC  " + str.tostring(bVal, format.volume), textcolor = colorBuyVol))
                         liqPocBuyFnd := true
                     if bin == 0
-                        liqLabels.push(label.new(cp, style = label.style_label_upper_left, color = color(na), text = "▲\n" + str.tostring(liqTotBuyVol, format.volume), textcolor = colorBuyVol))
+                        _liqLabels.push(label.new(cp, style = label.style_label_upper_left, color = color(na), text = "▲\n" + str.tostring(liqTotBuyVol, format.volume), textcolor = colorBuyVol))
 
                 binClrProf = close < bMid
                      ? color.from_gradient(relW, 0, liqMaxUpperW, color.rgb(255, 82, 82, 90), colorSellVol)
@@ -570,11 +569,11 @@ if barstate.islast
                      ? color.from_gradient(relW, 0, liqMaxUpperW, color(na), colorSellVol)
                      : color.from_gradient(relW, 0, liqMaxLowerW, color(na), colorBuyVol)
 
-                liqLvlBoxes.push(box.new(bar_index - liqVizBars - relW / 5, bHigh, bar_index, bLow, chart.bg_color, liqSep, bgcolor = binClrLvl))
-                liqProfBoxes.push(box.new(liqBStart, bHigh, liqBStart + relW, bLow, chart.bg_color, liqSep, bgcolor = binClrProf))
+                _liqLvlBoxes.push(box.new(bar_index - liqVizBars - relW / 5, bHigh, bar_index, bLow, chart.bg_color, liqSep, bgcolor = binClrLvl))
+                _liqProfBoxes.push(box.new(liqBStart, bHigh, liqBStart + relW, bLow, chart.bg_color, liqSep, bgcolor = binClrProf))
 
         // Extend level boxes back to where price crossed them
-        for bx in liqLvlBoxes
+        for bx in _liqLvlBoxes
             for i = liqVizBars - 1 to 0
                 hi  = high[i]
                 lo  = low[i]
@@ -582,9 +581,8 @@ if barstate.islast
                 if hi > mid and lo < mid
                     bx.set_left(bar_index - i + 1)
 
-        liqSellPoly = polyline.new(liqSellPts, line_color = colorSellVol, force_overlay = true, line_width = 2)
-        liqBuyPoly  = polyline.new(liqBuyPts,  line_color = colorBuyVol,  force_overlay = true, line_width = 2)
-        allProfiles.push(ProfileDraw.new(liqProfBoxes, liqLvlBoxes, liqSellPoly, liqBuyPoly, liqLabels))
+        _liqSellLine := polyline.new(liqSellPts, line_color = colorSellVol, force_overlay = true, line_width = 2)
+        _liqBuyLine  := polyline.new(liqBuyPts,  line_color = colorBuyVol,  force_overlay = true, line_width = 2)
 
     // ── SIGNAL PANEL ──────────────────────────
     isLong  = lastDir == "LONG"
