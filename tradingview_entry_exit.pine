@@ -1,0 +1,855 @@
+//@version=6
+// ═══════════════════════════════════════════════════════════════════
+//  INTRADAY SIGNAL PANEL + LIVE MARKET SCANNER  |  Pine Script v6
+//  Clean chart · Signal panel · Top 5 trades right now
+//  Optimised for: 5m · 15m · 30m charts
+// ═══════════════════════════════════════════════════════════════════
+indicator("Intraday Signal Panel + Scanner", overlay=true, max_labels_count=500, max_lines_count=200, max_boxes_count=500, max_polylines_count=10)
+
+// ─────────────────────────────────────────────
+// INPUT GROUPS
+// ─────────────────────────────────────────────
+grpEMA  = "═══ EMA Settings ═══"
+grpTP   = "═══ TP / SL Settings ═══"
+grpFilt = "═══ Filters ═══"
+grpHTF  = "═══ Higher Timeframe Trend Filter ═══"
+grpLvl  = "═══ Key Levels & Entry Quality ═══"
+grpSess = "═══ Session (exchange time) ═══"
+grpDisp = "═══ Display ═══"
+grpScan = "═══ Market Scanner — change to your markets ═══"
+grpLiq  = "═══ Liquidity Volume Profile ═══"
+
+// EMA
+ema5Len  = input.int(5,  "EMA 5",  group=grpEMA, minval=1)
+ema9Len  = input.int(9,  "EMA 9",  group=grpEMA, minval=1)
+ema21Len = input.int(21, "EMA 21", group=grpEMA, minval=1)
+ema50Len = input.int(50, "EMA 50", group=grpEMA, minval=1)
+
+// RSI
+rsiLen  = input.int(7,  "RSI Length",     group=grpFilt, minval=1)
+rsiOB   = input.int(70, "RSI Overbought", group=grpFilt, minval=55, maxval=90)
+rsiOS   = input.int(30, "RSI Oversold",   group=grpFilt, minval=10, maxval=45)
+
+// Stoch
+stochK  = input.int(5, "Stoch %K", group=grpFilt, minval=1)
+stochD  = input.int(3, "Stoch %D", group=grpFilt, minval=1)
+stochSm = input.int(3, "Smooth",   group=grpFilt, minval=1)
+
+// MACD
+macdF   = input.int(8,  "MACD Fast",   group=grpFilt, minval=1)
+macdSl  = input.int(17, "MACD Slow",   group=grpFilt, minval=1)
+macdSig = input.int(9,  "MACD Signal", group=grpFilt, minval=1)
+
+// TP/SL  — TP1 = 2:1 R:R minimum by default
+atrLen  = input.int(7,    "ATR Length",         group=grpTP, minval=1)
+slMult  = input.float(1.0,"SL ATR Multiplier",  group=grpTP, minval=0.2, step=0.1)
+tp1Mult = input.float(2.0,"TP1 ATR Multiplier", group=grpTP, minval=0.3, step=0.1)
+tp2Mult = input.float(3.5,"TP2 ATR Multiplier", group=grpTP, minval=0.5, step=0.1)
+tp3Mult = input.float(6.0,"TP3 ATR Multiplier", group=grpTP, minval=1.0, step=0.1)
+
+// Filters
+minConf = input.int(5,    "Min Score to Signal (1-6)", group=grpFilt, minval=1, maxval=6)
+volFilt = input.bool(true, "Require Above-Avg Volume", group=grpFilt)
+volMult = input.float(1.1, "Volume Multiplier",        group=grpFilt, step=0.1)
+useAdx  = input.bool(true, "Enable ADX Chop Filter",   group=grpFilt)
+adxLen  = input.int(14,    "ADX Length",                group=grpFilt, minval=1)
+adxMin  = input.int(20,    "Min ADX (20+ = trending)",  group=grpFilt, minval=5, maxval=50)
+
+// Higher Timeframe Trend Filter
+useHTF   = input.bool(true,  "Enable HTF Trend Filter",        group=grpHTF)
+htfTF    = input.timeframe("240", "HTF Timeframe (default 4H)", group=grpHTF)
+htfFast  = input.int(21, "HTF Fast EMA",                       group=grpHTF, minval=1)
+htfSlow  = input.int(50, "HTF Slow EMA",                       group=grpHTF, minval=1)
+
+// Key Levels & Entry Quality
+useDayBias  = input.bool(true,  "Day Bias Filter (above/below session open)", group=grpLvl)
+useKeyLvl   = input.bool(true,  "Reject entries heading into key levels",     group=grpLvl)
+keyLvlRange = input.float(0.4,  "Key Level Proximity (ATR multiplier)",       group=grpLvl, minval=0.1, step=0.1)
+useStrCand  = input.bool(true,  "Require Strong Entry Candle (body > 45%)",   group=grpLvl)
+showKeyLvls = input.bool(true,  "Show Previous Day H/L on chart",             group=grpLvl)
+
+// Session
+useSess = input.bool(true,          "Limit to Session",      group=grpSess)
+sessStr = input.session("0700-2000","Session (exch. time)",  group=grpSess)
+
+// Display
+showEMAs = input.bool(true, "Show EMAs",               group=grpDisp)
+showVWAP = input.bool(true, "Show VWAP",               group=grpDisp)
+showTP   = input.bool(true, "Show TP/SL Lines",        group=grpDisp)
+showDots = input.bool(true, "Show Signal Dots (small)", group=grpDisp)
+
+// Market scanner symbols (edit these to whatever you trade)
+sym1  = input.symbol("FX:EURUSD",        "Market 1",  group=grpScan)
+sym2  = input.symbol("FX:GBPUSD",        "Market 2",  group=grpScan)
+sym3  = input.symbol("FX:USDJPY",        "Market 3",  group=grpScan)
+sym4  = input.symbol("FX:AUDUSD",        "Market 4",  group=grpScan)
+sym5  = input.symbol("FX:USDCAD",        "Market 5",  group=grpScan)
+sym6  = input.symbol("FX:USDCHF",        "Market 6",  group=grpScan)
+sym7  = input.symbol("BINANCE:BTCUSDT",  "Market 7",  group=grpScan)
+sym8  = input.symbol("BINANCE:ETHUSDT",  "Market 8",  group=grpScan)
+sym9  = input.symbol("FOREXCOM:SPXUSD",  "Market 9",  group=grpScan)
+sym10 = input.symbol("NASDAQ:QQQ",       "Market 10", group=grpScan)
+scanTF = input.timeframe("30", "Scan Timeframe (default 30m)", group=grpScan)
+
+// Liquidity Volume Profile
+useLiq       = input.bool(true,  "Enable Liquidity Volume Filter",  group=grpLiq)
+liqLookback  = input.int(50,     "Volume Lookback (bars)",          group=grpLiq, minval=10, maxval=500)
+showLiqMap   = input.bool(true,  "Show Liquidity Map on Chart",     group=grpLiq)
+liqVizBars   = input.int(200,    "Map Lookback (bars)",             group=grpLiq, minval=50, maxval=500)
+liqBins      = input.int(90,     "Map Bins",                        group=grpLiq, minval=10, maxval=200)
+liqSepBins   = input.bool(true,  "Separate Bins",                   group=grpLiq)
+colorBuyVol  = input.color(color.rgb(14,  236, 165), "Buy Volume Color",  group=grpLiq)
+colorSellVol = input.color(color.rgb(236, 14,  165), "Sell Volume Color", group=grpLiq)
+liqSep       = liqSepBins ? 1 : 0
+
+// ─────────────────────────────────────────────
+// LIQUIDITY PROFILE DRAW VARS (avoid UDT parser issues)
+// ─────────────────────────────────────────────
+var _liqLvlBoxes  = array.new<box>()
+var _liqProfBoxes = array.new<box>()
+var _liqLabels    = array.new<label>()
+var _liqPolylines = array.new<polyline>()
+
+// ─────────────────────────────────────────────
+// CORE CALCS — current chart symbol
+// ─────────────────────────────────────────────
+inSession = not useSess or time(timeframe.period, sessStr) != 0
+
+ema5  = ta.ema(close, ema5Len)
+ema9  = ta.ema(close, ema9Len)
+ema21 = ta.ema(close, ema21Len)
+ema50 = ta.ema(close, ema50Len)
+vwap  = ta.vwap(hlc3)
+rsi   = ta.rsi(close, rsiLen)
+
+[macdLine, sigLine, _] = ta.macd(close, macdF, macdSl, macdSig)
+macdBull = ta.crossover(macdLine, sigLine)
+macdBear = ta.crossunder(macdLine, sigLine)
+
+stK = ta.sma(ta.stoch(close, high, low, stochK), stochSm)
+stD = ta.sma(stK, stochD)
+
+atr    = ta.atr(atrLen)
+volSMA = ta.sma(volume, 20)
+volOk  = volFilt ? volume > volSMA * volMult : true
+
+[_, _, adxVal] = ta.dmi(adxLen, adxLen)
+adxOk  = not useAdx or adxVal > adxMin
+
+// ─────────────────────────────────────────────
+// LIQUIDITY — per-bar rolling volume split (signal filter)
+// liqPriceRef must be at script scope so [i] access works in the map
+// ─────────────────────────────────────────────
+liqPriceStd = ta.stdev(close, 25) * 2
+liqPriceRef = close > open ? low - liqPriceStd : high + liqPriceStd
+liqBullVol  = math.sum(volume * (close > open ? 1.0 : 0.0), liqLookback)
+liqBearVol  = math.sum(volume * (close < open ? 1.0 : 0.0), liqLookback)
+liqLongOk   = not useLiq or liqBullVol > liqBearVol
+liqShortOk  = not useLiq or liqBearVol > liqBullVol
+
+// ─────────────────────────────────────────────
+// KEY LEVELS — previous day H/L + session open
+// ─────────────────────────────────────────────
+prevDayHigh = request.security(syminfo.tickerid, "D", high[1])
+prevDayLow  = request.security(syminfo.tickerid, "D", low[1])
+sessOpen    = request.security(syminfo.tickerid, "D", open)
+
+// Day bias: bullish if price is above today's open, bearish if below
+dayBullish = close > sessOpen
+dayBearish = close < sessOpen
+dayBiasLongOk  = not useDayBias or dayBullish
+dayBiasShtOk   = not useDayBias or dayBearish
+
+// Clear of key level: reject longs heading into prev day high resistance
+//                     reject shorts heading into prev day low support
+nearPrevHigh = math.abs(close - prevDayHigh) <= atr * keyLvlRange
+nearPrevLow  = math.abs(close - prevDayLow)  <= atr * keyLvlRange
+keyLvlLongOk = not useKeyLvl or not nearPrevHigh
+keyLvlShtOk  = not useKeyLvl or not nearPrevLow
+
+// ─────────────────────────────────────────────
+// CANDLESTICK PATTERNS — current chart
+// ─────────────────────────────────────────────
+body   = math.abs(close - open)
+candle = high - low
+upWick = high - math.max(close, open)
+dnWick = math.min(close, open) - low
+isBull = close > open
+isBear = close < open
+
+bullEngulf   = isBear[1] and isBull and open <= close[1] and close >= open[1] and body > body[1]
+bearEngulf   = isBull[1] and isBear and open >= close[1] and close <= open[1] and body > body[1]
+hammer       = dnWick >= body * 2.0 and upWick <= body * 0.5 and body > atr * 0.15
+shootStar    = upWick >= body * 2.0 and dnWick <= body * 0.5 and body > atr * 0.15
+bullPin      = dnWick >= candle * 0.55 and body < candle * 0.35
+bearPin      = upWick >= candle * 0.55 and body < candle * 0.35
+bullMomentum = isBull and body > atr * 0.7 and close > ema9
+bearMomentum = isBear and body > atr * 0.7 and close < ema9
+bullPattern  = bullEngulf or hammer or bullPin or bullMomentum
+bearPattern  = bearEngulf or shootStar or bearPin or bearMomentum
+
+// Strong candle: body > 45% of candle range (rules out doji/indecision entries)
+strongBull = isBull and candle > 0 and (body / candle) >= 0.45
+strongBear = isBear and candle > 0 and (body / candle) >= 0.45
+strCandLongOk = not useStrCand or strongBull or bullPattern
+strCandShtOk  = not useStrCand or strongBear or bearPattern
+
+// ─────────────────────────────────────────────
+// CONFLUENCE SCORING — current chart (6 layers)
+// ─────────────────────────────────────────────
+longS1 = (ema5 > ema9 and ema9 > ema21 and close > ema21) ? 1 : 0
+longS2 = (close > vwap) ? 1 : 0
+longS3 = (rsi > 45 and rsi < rsiOB) ? 1 : 0
+longS4 = (macdLine > sigLine or macdBull) ? 1 : 0
+longS5 = (stK > stD and stK < 80) ? 1 : 0
+longS6 = bullPattern ? 1 : 0
+longScore = longS1 + longS2 + longS3 + longS4 + longS5 + longS6
+
+shortS1 = (ema5 < ema9 and ema9 < ema21 and close < ema21) ? 1 : 0
+shortS2 = (close < vwap) ? 1 : 0
+shortS3 = (rsi < 55 and rsi > rsiOS) ? 1 : 0
+shortS4 = (macdLine < sigLine or macdBear) ? 1 : 0
+shortS5 = (stK < stD and stK > 20) ? 1 : 0
+shortS6 = bearPattern ? 1 : 0
+shortScore = shortS1 + shortS2 + shortS3 + shortS4 + shortS5 + shortS6
+
+// ─────────────────────────────────────────────
+// HIGHER TIMEFRAME TREND FILTER
+// Must be before SIGNALS so htfUptrend/htfDowntrend are defined
+// ─────────────────────────────────────────────
+htfEmaFast   = request.security(syminfo.tickerid, htfTF, ta.ema(close, htfFast))
+htfEmaSlow   = request.security(syminfo.tickerid, htfTF, ta.ema(close, htfSlow))
+htfUptrend   = htfEmaFast > htfEmaSlow
+htfDowntrend = htfEmaFast < htfEmaSlow
+
+// ─────────────────────────────────────────────
+// SIGNALS — current chart
+// ─────────────────────────────────────────────
+htfLongOk  = not useHTF or htfUptrend
+htfShortOk = not useHTF or htfDowntrend
+
+longSignal  = longScore  >= minConf and volOk and adxOk and inSession
+             and htfLongOk and dayBiasLongOk and keyLvlLongOk and strCandLongOk
+             and liqLongOk
+             and not (longScore[1]  >= minConf and volOk[1])
+shortSignal = shortScore >= minConf and volOk and adxOk and inSession
+             and htfShortOk and dayBiasShtOk and keyLvlShtOk and strCandShtOk
+             and liqShortOk
+             and not (shortScore[1] >= minConf and volOk[1])
+
+// ─────────────────────────────────────────────
+// TP / SL — current chart
+// ─────────────────────────────────────────────
+var float lEntry = na
+var float lSL    = na
+var float lTP1   = na
+var float lTP2   = na
+var float lTP3   = na
+var float sEntry = na
+var float sSL    = na
+var float sTP1   = na
+var float sTP2   = na
+var float sTP3   = na
+var int   lBar   = na
+var int   sBar   = na
+var string lastDir = "NONE"
+var bool  lTP1Hit = false
+var bool  sTP1Hit = false
+var int   lScore  = 0
+var int   sScore  = 0
+
+if longSignal
+    lEntry  := close
+    lSL     := close - atr * slMult
+    lTP1    := close + atr * tp1Mult
+    lTP2    := close + atr * tp2Mult
+    lTP3    := close + atr * tp3Mult
+    lBar    := bar_index
+    lastDir := "LONG"
+    lTP1Hit := false
+    lScore  := longScore
+
+if shortSignal
+    sEntry  := close
+    sSL     := close + atr * slMult
+    sTP1    := close - atr * tp1Mult
+    sTP2    := close - atr * tp2Mult
+    sTP3    := close - atr * tp3Mult
+    sBar    := bar_index
+    lastDir := "SHORT"
+    sTP1Hit := false
+    sScore  := shortScore
+
+// Track breakeven trigger (TP1 reached since last signal)
+if lastDir == "LONG"  and not na(lTP1) and high >= lTP1
+    lTP1Hit := true
+if lastDir == "SHORT" and not na(sTP1) and low  <= sTP1
+    sTP1Hit := true
+
+// ─────────────────────────────────────────────
+// HOLD TIME ESTIMATE
+// ─────────────────────────────────────────────
+tf_mins = timeframe.isseconds ? timeframe.multiplier / 60.0    :
+          timeframe.isminutes ? timeframe.multiplier * 1.0     :
+          timeframe.isdaily   ? timeframe.multiplier * 1440.0  :
+          timeframe.isweekly  ? timeframe.multiplier * 10080.0 :
+          timeframe.ismonthly ? timeframe.multiplier * 43200.0 : 1440.0
+
+bars_per_atr = 2.2
+holdTP1 = math.round(tp1Mult * bars_per_atr * tf_mins)
+holdTP2 = math.round(tp2Mult * bars_per_atr * tf_mins)
+holdTP3 = math.round(tp3Mult * bars_per_atr * tf_mins)
+
+// ─────────────────────────────────────────────
+// SCANNER FUNCTION
+// Runs inside request.security() for each market.
+// Returns [bestScore, isLong, closePrice, atrValue]
+// ─────────────────────────────────────────────
+f_scan() =>
+    e5_  = ta.ema(close, 5)
+    e9_  = ta.ema(close, 9)
+    e21_ = ta.ema(close, 21)
+    vw_  = ta.vwap(hlc3)
+    rs_  = ta.rsi(close, 7)
+    [mL_, mS_, _h] = ta.macd(close, 8, 17, 9)
+    sk_  = ta.sma(ta.stoch(close, high, low, 5), 3)
+    sd_  = ta.sma(sk_, 3)
+    at_  = ta.atr(7)
+    bd_  = math.abs(close - open)
+    cn_  = high - low
+    uw_  = high - math.max(close, open)
+    dw_  = math.min(close, open) - low
+    ib_  = close > open
+    ibr_ = close < open
+
+    bEng_ = ibr_[1] and ib_  and open <= close[1] and close >= open[1] and bd_ > bd_[1]
+    sEng_ = ib_[1]  and ibr_ and open >= close[1] and close <= open[1] and bd_ > bd_[1]
+    hm_   = dw_ >= bd_ * 2.0 and uw_ <= bd_ * 0.5 and bd_ > at_ * 0.15
+    sh_   = uw_ >= bd_ * 2.0 and dw_ <= bd_ * 0.5 and bd_ > at_ * 0.15
+    bP_   = dw_ >= cn_ * 0.55 and bd_ < cn_ * 0.35
+    brP_  = uw_ >= cn_ * 0.55 and bd_ < cn_ * 0.35
+    bM_   = ib_  and bd_ > at_ * 0.7 and close > e9_
+    sM_   = ibr_ and bd_ > at_ * 0.7 and close < e9_
+
+    lSc_ = ((e5_ > e9_ and e9_ > e21_ and close > e21_) ? 1 : 0) +
+           ((close > vw_) ? 1 : 0) +
+           ((rs_ > 45 and rs_ < 70) ? 1 : 0) +
+           ((mL_ > mS_) ? 1 : 0) +
+           ((sk_ > sd_ and sk_ < 80) ? 1 : 0) +
+           ((bEng_ or hm_ or bP_ or bM_) ? 1 : 0)
+
+    sSc_ = ((e5_ < e9_ and e9_ < e21_ and close < e21_) ? 1 : 0) +
+           ((close < vw_) ? 1 : 0) +
+           ((rs_ < 55 and rs_ > 30) ? 1 : 0) +
+           ((mL_ < mS_) ? 1 : 0) +
+           ((sk_ < sd_ and sk_ > 20) ? 1 : 0) +
+           ((sEng_ or sh_ or brP_ or sM_) ? 1 : 0)
+
+    best_  = math.max(lSc_, sSc_)
+    isLg_  = lSc_ >= sSc_ ? 1 : 0
+    [best_, isLg_, close, at_]
+
+// ─────────────────────────────────────────────
+// SCANNER — request.security() for each market
+// Must be at top level, not inside if blocks
+// ─────────────────────────────────────────────
+[sc1,  d1,  c1,  a1]  = request.security(sym1,  scanTF, f_scan())
+[sc2,  d2,  c2,  a2]  = request.security(sym2,  scanTF, f_scan())
+[sc3,  d3,  c3,  a3]  = request.security(sym3,  scanTF, f_scan())
+[sc4,  d4,  c4,  a4]  = request.security(sym4,  scanTF, f_scan())
+[sc5,  d5,  c5,  a5]  = request.security(sym5,  scanTF, f_scan())
+[sc6,  d6,  c6,  a6]  = request.security(sym6,  scanTF, f_scan())
+[sc7,  d7,  c7,  a7]  = request.security(sym7,  scanTF, f_scan())
+[sc8,  d8,  c8,  a8]  = request.security(sym8,  scanTF, f_scan())
+[sc9,  d9,  c9,  a9]  = request.security(sym9,  scanTF, f_scan())
+[sc10, d10, c10, a10] = request.security(sym10, scanTF, f_scan())
+
+// ─────────────────────────────────────────────
+// ALL USER FUNCTIONS — must be at top level
+// ─────────────────────────────────────────────
+holdStr(mins) =>
+    mins < 60 ? str.tostring(mins) + " min" :
+     str.tostring(math.round(mins / 60.0, 1)) + " hr"
+
+scoreBar(s, maxS) =>
+    filled = math.round(s)
+    empty  = maxS - filled
+    b = ""
+    for i = 0 to filled - 1
+        b += "█"
+    for i = 0 to empty - 1
+        b += "░"
+    b
+
+// Decimal places based on price magnitude (handles forex, crypto, indices)
+dynDp(v) =>
+    av = math.abs(v)
+    av >= 100.0 ? 2 : av >= 1.0 ? 4 : 5
+
+scanFmt(v) => str.tostring(math.round(v, dynDp(v)))
+
+// Strip exchange prefix from symbol string e.g. "FX:EURUSD" → "EURUSD"
+shortSym(s) =>
+    parts = str.split(s, ":")
+    array.size(parts) > 1 ? array.get(parts, 1) : s
+
+// Signal panel table (top-left)
+var table panel = table.new(position.top_left, 2, 30,
+ bgcolor      = color.new(#0d0d0d, 10),
+ border_color = color.new(color.gray, 60), border_width = 1,
+ frame_color  = color.new(color.gray, 30), frame_width  = 2)
+
+cell(col, row, txt, tc, sz, bg) =>
+    table.cell(panel, col, row, txt,
+     text_color=tc, text_size=sz, bgcolor=bg, text_halign=text.align_left)
+
+dp              = syminfo.mintick >= 0.01 ? 2 : syminfo.mintick >= 0.0001 ? 4 : 5
+p(v)            => str.tostring(math.round(v, dp))
+rrStr(tp, sl, en) => str.tostring(math.round(math.abs(tp - en) / math.abs(en - sl), 1)) + ":1"
+chk(v)          => v ? "✔" : "✘"
+
+// Scanner table (bottom-left)
+var table scanTbl = table.new(position.bottom_left, 6, 7,
+ bgcolor      = color.new(#0d0d0d, 10),
+ border_color = color.new(color.gray, 60), border_width = 1,
+ frame_color  = color.new(color.gray, 30), frame_width  = 2)
+
+scCell(col, row, txt, tc, sz, bg) =>
+    table.cell(scanTbl, col, row, txt,
+     text_color=tc, text_size=sz, bgcolor=bg, text_halign=text.align_center)
+
+// ─────────────────────────────────────────────
+// PLOTS
+// ─────────────────────────────────────────────
+plot(showKeyLvls ? prevDayHigh : na, "Prev Day High", color=color.new(color.yellow, 20), linewidth=1, style=plot.style_stepline)
+plot(showKeyLvls ? prevDayLow  : na, "Prev Day Low",  color=color.new(color.yellow, 20), linewidth=1, style=plot.style_stepline)
+plot(showKeyLvls ? sessOpen    : na, "Session Open",  color=color.new(color.white,  50), linewidth=1, style=plot.style_stepline)
+plot(showEMAs ? ema5  : na, "EMA 5",  color=color.new(color.aqua,   0), linewidth=1)
+plot(showEMAs ? ema9  : na, "EMA 9",  color=color.new(color.yellow, 0), linewidth=1)
+plot(showEMAs ? ema21 : na, "EMA 21", color=color.new(color.orange, 0), linewidth=2)
+plot(showEMAs ? ema50 : na, "EMA 50", color=color.new(color.gray,  40), linewidth=2)
+plot(showVWAP ? vwap  : na, "VWAP",   color=color.new(color.purple, 0), linewidth=2)
+
+plotshape(showDots and longSignal,
+ style=shape.circle, location=location.belowbar,
+ color=color.new(color.lime, 0), size=size.tiny, title="Long dot")
+
+plotshape(showDots and shortSignal,
+ style=shape.circle, location=location.abovebar,
+ color=color.new(color.red, 0), size=size.tiny, title="Short dot")
+
+barcolor(longSignal  ? color.new(color.lime, 60) :
+         shortSignal ? color.new(color.red,  60) : na)
+
+// ─────────────────────────────────────────────
+// TP / SL LINES
+// ─────────────────────────────────────────────
+ext = 40
+if showTP and longSignal
+    line.new(bar_index, lSL,  bar_index + ext, lSL,  color=color.new(color.red,   20), width=1, style=line.style_dotted)
+    line.new(bar_index, lTP1, bar_index + ext, lTP1, color=color.new(color.lime,  40), width=1, style=line.style_dashed)
+    line.new(bar_index, lTP2, bar_index + ext, lTP2, color=color.new(color.lime,  15), width=2, style=line.style_dashed)
+    line.new(bar_index, lTP3, bar_index + ext, lTP3, color=color.new(color.lime,   0), width=2, style=line.style_solid)
+
+if showTP and shortSignal
+    line.new(bar_index, sSL,  bar_index + ext, sSL,  color=color.new(color.red,    20), width=1, style=line.style_dotted)
+    line.new(bar_index, sTP1, bar_index + ext, sTP1, color=color.new(color.orange, 40), width=1, style=line.style_dashed)
+    line.new(bar_index, sTP2, bar_index + ext, sTP2, color=color.new(color.orange, 15), width=2, style=line.style_dashed)
+    line.new(bar_index, sTP3, bar_index + ext, sTP3, color=color.new(color.orange,  0), width=2, style=line.style_solid)
+
+// ─────────────────────────────────────────────
+// SIGNAL PANEL (top-left) + SCANNER TABLE (bottom-left)
+// ─────────────────────────────────────────────
+if barstate.islast
+
+    // ── LIQUIDITY VOLUME PROFILE (ChartPrime Liquidity Pro Map) ───────
+    // Always clear previous drawings first (handles show/hide toggle)
+    for bx in _liqLvlBoxes
+        bx.delete()
+    _liqLvlBoxes.clear()
+    for bx in _liqProfBoxes
+        bx.delete()
+    _liqProfBoxes.clear()
+    for lbl in _liqLabels
+        lbl.delete()
+    _liqLabels.clear()
+    for pl in _liqPolylines
+        pl.delete()
+    _liqPolylines.clear()
+
+    if showLiqMap
+        liqSrcVals   = array.new<float>()
+        liqSellPts   = array.new<chart.point>()
+        liqBuyPts    = array.new<chart.point>()
+        liqVolBins   = array.new<float>(liqBins, 0.0)
+
+        liqPocSellFnd = false
+        liqPocBuyFnd  = false
+        liqBStart     = bar_index + 2
+        liqOff        = 50
+
+        liqTotUpperW  = 0
+        liqRunUpperW  = 0
+        liqMaxUpperW  = 0
+        liqTotSellVol = 0.0
+        liqTotLowerW  = 0
+        liqRunLowerW  = 0
+        liqMaxLowerW  = 0
+        liqTotBuyVol  = 0.0
+
+        // Collect historical price reference series
+        for i = 0 to liqVizBars - 1
+            liqSrcVals.push(liqPriceRef[i])
+
+        liqMinPx = liqSrcVals.min()
+        liqMaxPx = liqSrcVals.max()
+        liqStep  = (liqMaxPx - liqMinPx) / liqBins
+
+        // Assign volume into bins
+        for bar = 0 to liqVizBars - 1
+            for bin = 0 to liqBins - 1
+                bLow = liqMinPx + liqStep * bin
+                bMid = bLow + liqStep / 2
+                if math.abs(liqPriceRef[bar] - bMid) <= liqStep and not (math.abs(close - bMid) < liqStep * 2)
+                    liqVolBins.set(bin, liqVolBins.get(bin) + volume[bar])
+
+        // Split bins into buy (below close) vs sell (above close)
+        for bin = 0 to liqBins - 1
+            bLow = liqMinPx + liqStep * bin
+            bMid = bLow + liqStep / 2
+            bVal = liqVolBins.get(bin)
+            relW = int(bVal / liqVolBins.max() * liqOff)
+            if close < bMid
+                liqTotSellVol += bVal
+                liqTotUpperW  += relW
+                liqMaxUpperW  := math.max(liqMaxUpperW, relW)
+            else
+                liqTotBuyVol  += bVal
+                liqTotLowerW  += relW
+                liqMaxLowerW  := math.max(liqMaxLowerW, relW)
+
+        // Draw profile boxes and polyline points
+        for bin = 0 to liqBins - 1
+            bLow  = liqMinPx + liqStep * bin
+            bHigh = bLow + liqStep
+            bMid  = bLow + liqStep / 2
+            bVal  = liqVolBins.get(bin)
+            relW  = int(bVal / liqVolBins.max() * liqOff)
+
+            if not (math.abs(close - bMid) < liqStep * 2)
+                if close < bMid
+                    liqRunUpperW  += int(bVal / liqVolBins.max() * liqMaxUpperW)
+                    sSt = liqTotUpperW > 0 ? math.round(liqRunUpperW / liqTotUpperW * 50) : 0
+                    cp  = chart.point.from_index(liqBStart + sSt, bHigh)
+                    liqSellPts.push(cp)
+                    if relW == liqMaxUpperW and not liqPocSellFnd
+                        _liqLabels.push(label.new(liqBStart + relW, bMid, style = label.style_label_left, color = color(na), text = "◀ POC  " + str.tostring(bVal, format.volume), textcolor = colorSellVol))
+                        liqPocSellFnd := true
+                    if bin == liqBins - 1
+                        _liqLabels.push(label.new(cp, style = label.style_label_lower_left, color = color(na), text = str.tostring(liqTotSellVol, format.volume) + "\n▼", textcolor = colorSellVol))
+                else
+                    liqRunLowerW  += int(bVal / liqVolBins.max() * liqMaxLowerW)
+                    sSt = liqTotLowerW > 0 ? math.round(liqMaxLowerW - (liqRunLowerW / liqTotLowerW * 50)) : 0
+                    cp  = chart.point.from_index(liqBStart + sSt, bLow)
+                    liqBuyPts.push(cp)
+                    if relW == liqMaxLowerW and not liqPocBuyFnd
+                        _liqLabels.push(label.new(liqBStart + relW, bMid, style = label.style_label_left, color = color(na), text = "◀ POC  " + str.tostring(bVal, format.volume), textcolor = colorBuyVol))
+                        liqPocBuyFnd := true
+                    if bin == 0
+                        _liqLabels.push(label.new(cp, style = label.style_label_upper_left, color = color(na), text = "▲\n" + str.tostring(liqTotBuyVol, format.volume), textcolor = colorBuyVol))
+
+                binClrProf = close < bMid
+                     ? color.from_gradient(relW, 0, liqMaxUpperW, color.rgb(255, 82, 82, 90), colorSellVol)
+                     : color.from_gradient(relW, 0, liqMaxLowerW, color.rgb(105, 255, 82, 90), colorBuyVol)
+                binClrLvl  = close < bMid
+                     ? color.from_gradient(relW, 0, liqMaxUpperW, color(na), colorSellVol)
+                     : color.from_gradient(relW, 0, liqMaxLowerW, color(na), colorBuyVol)
+
+                _liqLvlBoxes.push(box.new(bar_index - liqVizBars - relW / 5, bHigh, bar_index, bLow, chart.bg_color, liqSep, bgcolor = binClrLvl))
+                _liqProfBoxes.push(box.new(liqBStart, bHigh, liqBStart + relW, bLow, chart.bg_color, liqSep, bgcolor = binClrProf))
+
+        // Extend level boxes back to where price crossed them
+        for bx in _liqLvlBoxes
+            for i = liqVizBars - 1 to 0
+                hi  = high[i]
+                lo  = low[i]
+                mid = math.avg(bx.get_top(), bx.get_bottom())
+                if hi > mid and lo < mid
+                    bx.set_left(bar_index - i + 1)
+
+        if liqSellPts.size() > 1
+            _liqPolylines.push(polyline.new(liqSellPts, line_color = colorSellVol, force_overlay = true, line_width = 2))
+        if liqBuyPts.size() > 1
+            _liqPolylines.push(polyline.new(liqBuyPts,  line_color = colorBuyVol,  force_overlay = true, line_width = 2))
+
+    // ── SIGNAL PANEL ──────────────────────────
+    isLong  = lastDir == "LONG"
+    isShort = lastDir == "SHORT"
+    noSig   = lastDir == "NONE"
+
+    dirColor = isLong  ? color.lime : isShort ? color.red  : color.gray
+    bgHeader = isLong  ? color.new(#003300, 20) :
+               isShort ? color.new(#330000, 20) : color.new(#1a1a1a, 20)
+    dirText  = isLong  ? "▲  BUY  /  LONG" :
+               isShort ? "▼  SELL  /  SHORT" : "◆  WAITING FOR SIGNAL"
+
+    entryVal = isLong  ? lEntry : isShort ? sEntry : close
+    tp1Val   = isLong  ? lTP1   : isShort ? sTP1   : na
+    tp2Val   = isLong  ? lTP2   : isShort ? sTP2   : na
+    tp3Val   = isLong  ? lTP3   : isShort ? sTP3   : na
+    slVal    = isLong  ? lSL    : isShort ? sSL    : na
+    score    = isLong  ? lScore : isShort ? sScore : 0
+    barsAgo  = isLong  ? bar_index - lBar : isShort ? bar_index - sBar : 0
+    minsAgo  = math.round(barsAgo * tf_mins)
+
+    table.cell(panel, 0, 0, dirText, text_color=dirColor,
+     text_size=size.normal, bgcolor=bgHeader, text_halign=text.align_center)
+    table.cell(panel, 1, 0, "", text_color=dirColor,
+     text_size=size.normal, bgcolor=bgHeader)
+
+    cell(0, 1, "SCORE", color.silver, size.small, color.new(#111111, 0))
+    cell(1, 1, scoreBar(score, 6) + "  " + str.tostring(score) + " / 6",
+     score >= minConf ? color.lime : color.gray, size.small, color.new(#111111, 0))
+
+    cell(0, 2, "SIGNAL AGE", color.silver, size.small, color.new(#0d0d0d, 0))
+    cell(1, 2, noSig ? "—" : str.tostring(barsAgo) + " bars  (~" + str.tostring(minsAgo) + " min ago)",
+     color.white, size.small, color.new(#0d0d0d, 0))
+
+    cell(0, 3, "─────────────",           color.new(color.gray,50), size.tiny, color.new(#0d0d0d,0))
+    cell(1, 3, "─────────────────────────",color.new(color.gray,50), size.tiny, color.new(#0d0d0d,0))
+
+    cell(0, 4, "ENTRY",    color.silver,            size.small,  color.new(#0d0d0d,0))
+    cell(1, 4, noSig ? "—" : p(entryVal), color.white, size.normal, color.new(#0d0d0d,0))
+
+    cell(0, 5, "STOP LOSS", color.new(color.red,20), size.small,  color.new(#1a0000,0))
+    cell(1, 5, noSig ? "—" : p(slVal),    color.red,  size.normal, color.new(#1a0000,0))
+
+    cell(0, 6, "─────────────",           color.new(color.gray,50), size.tiny, color.new(#0d0d0d,0))
+    cell(1, 6, "─────────────────────────",color.new(color.gray,50), size.tiny, color.new(#0d0d0d,0))
+
+    tpCol = isLong ? color.lime : color.new(color.orange, 0)
+
+    cell(0, 7, "TP 1  (" + holdStr(holdTP1) + ")", color.silver, size.small, color.new(#001a00,0))
+    cell(1, 7, noSig ? "—" : p(tp1Val) + "   R:R " + rrStr(tp1Val, slVal, entryVal),
+     tpCol, size.normal, color.new(#001a00,0))
+
+    cell(0, 8, "TP 2  (" + holdStr(holdTP2) + ")", color.silver, size.small, color.new(#002200,0))
+    cell(1, 8, noSig ? "—" : p(tp2Val) + "   R:R " + rrStr(tp2Val, slVal, entryVal),
+     tpCol, size.normal, color.new(#002200,0))
+
+    cell(0, 9, "TP 3  (" + holdStr(holdTP3) + ")", color.silver, size.small, color.new(#003300,0))
+    cell(1, 9, noSig ? "—" : p(tp3Val) + "   R:R " + rrStr(tp3Val, slVal, entryVal),
+     tpCol, size.normal, color.new(#003300,0))
+
+    cell(0, 10, "─────────────",           color.new(color.gray,50), size.tiny, color.new(#0d0d0d,0))
+    cell(1, 10, "─────────────────────────",color.new(color.gray,50), size.tiny, color.new(#0d0d0d,0))
+
+    cell(0, 11, "LIVE LAYERS",        color.new(color.gray,20), size.small, color.new(#111111,0))
+    cell(1, 11, "▲ LONG     ▼ SHORT", color.new(color.gray,20), size.small, color.new(#111111,0))
+
+    cell(0, 12, "EMA Stack",     color.silver, size.tiny, color.new(#0d0d0d,0))
+    cell(1, 12, chk(longS1==1) + "  Long   " + chk(shortS1==1) + "  Short",
+     longS1==1 ? color.lime : color.new(color.red,30), size.tiny, color.new(#0d0d0d,0))
+
+    cell(0, 13, "VWAP Side",     color.silver, size.tiny, color.new(#0d0d0d,0))
+    cell(1, 13, chk(longS2==1) + "  Long   " + chk(shortS2==1) + "  Short",
+     longS2==1 ? color.lime : color.new(color.red,30), size.tiny, color.new(#0d0d0d,0))
+
+    cell(0, 14, "RSI (" + str.tostring(math.round(rsi,1)) + ")", color.silver, size.tiny, color.new(#0d0d0d,0))
+    cell(1, 14, chk(longS3==1) + "  Long   " + chk(shortS3==1) + "  Short",
+     longS3==1 ? color.lime : color.new(color.red,30), size.tiny, color.new(#0d0d0d,0))
+
+    cell(0, 15, "MACD",          color.silver, size.tiny, color.new(#0d0d0d,0))
+    cell(1, 15, chk(longS4==1) + "  Long   " + chk(shortS4==1) + "  Short",
+     longS4==1 ? color.lime : color.new(color.red,30), size.tiny, color.new(#0d0d0d,0))
+
+    cell(0, 16, "Stochastic",    color.silver, size.tiny, color.new(#0d0d0d,0))
+    cell(1, 16, chk(longS5==1) + "  Long   " + chk(shortS5==1) + "  Short",
+     longS5==1 ? color.lime : color.new(color.red,30), size.tiny, color.new(#0d0d0d,0))
+
+    cell(0, 17, "Pattern/Burst", color.silver, size.tiny, color.new(#0d0d0d,0))
+    cell(1, 17, chk(longS6==1) + "  Long   " + chk(shortS6==1) + "  Short",
+     longS6==1 ? color.lime : color.new(color.red,30), size.tiny, color.new(#0d0d0d,0))
+
+    cell(0, 18, "─────────────",           color.new(color.gray,50), size.tiny, color.new(#0d0d0d,0))
+    cell(1, 18, "─────────────────────────",color.new(color.gray,50), size.tiny, color.new(#0d0d0d,0))
+
+    htfLabel = "HTF Trend (" + htfTF + "m)"
+    htfTrendTxt = htfUptrend ? "▲ UP — longs only" : htfDowntrend ? "▼ DOWN — shorts only" : "◆ FLAT"
+    htfTrendClr = htfUptrend ? color.lime : htfDowntrend ? color.red : color.gray
+    htfBg       = htfUptrend ? color.new(#001a00,0) : htfDowntrend ? color.new(#1a0000,0) : color.new(#111111,0)
+    htfActive   = useHTF ? htfTrendTxt : htfTrendTxt + "  (filter OFF)"
+    cell(0, 19, htfLabel,  color.silver,  size.tiny,  htfBg)
+    cell(1, 19, htfActive, htfTrendClr,   size.small, htfBg)
+
+    adxRnd  = math.round(adxVal, 1)
+    adxTxt  = adxVal > adxMin ? "✔ TRENDING (" + str.tostring(adxRnd) + ")" :
+                                 "✘ CHOPPY ("   + str.tostring(adxRnd) + ") — skip"
+    adxClr  = adxVal > adxMin ? color.lime : color.red
+    adxBg   = adxVal > adxMin ? color.new(#001a00,0) : color.new(#1a0000,0)
+    adxFilt = useAdx ? adxTxt : adxTxt + "  (filter OFF)"
+    cell(0, 20, "ADX Chop", color.silver, size.tiny,  color.new(#0d0d0d,0))
+    cell(1, 20, adxFilt,    adxClr,       size.tiny,  adxBg)
+
+    cell(0, 21, "─────────────",            color.new(color.gray,50), size.tiny, color.new(#0d0d0d,0))
+    cell(1, 21, "─────────────────────────", color.new(color.gray,50), size.tiny, color.new(#0d0d0d,0))
+
+    tp1Hit  = isLong ? lTP1Hit : isShort ? sTP1Hit : false
+    beText  = tp1Hit  ? "⚡ TP1 HIT — MOVE SL TO ENTRY NOW" :
+              noSig   ? "—" : "Watching... (fires when TP1 hit)"
+    beColor = tp1Hit  ? color.yellow : color.new(color.gray, 50)
+    beBg    = tp1Hit  ? color.new(#2a1f00, 0) : color.new(#0d0d0d, 0)
+    cell(0, 22, "BREAKEVEN", color.silver, size.tiny,   beBg)
+    cell(1, 22, beText,      beColor,      size.small,  beBg)
+
+    cell(0, 23, "─────────────",            color.new(color.gray,50), size.tiny, color.new(#0d0d0d,0))
+    cell(1, 23, "─────────────────────────", color.new(color.gray,50), size.tiny, color.new(#0d0d0d,0))
+
+    cell(0, 24, "TRADE QUALITY", color.new(color.gray,20), size.small, color.new(#111111,0))
+    cell(1, 24, "",               color.new(color.gray,20), size.small, color.new(#111111,0))
+
+    biasOk  = isLong ? dayBullish : isShort ? dayBearish : false
+    biasTxt = isLong  ? (dayBullish ? "✔ Above session open" : "✘ Below session open") :
+              isShort ? (dayBearish ? "✔ Below session open" : "✘ Above session open") : "—"
+    biasClr = biasOk ? color.lime : color.red
+    cell(0, 25, "Day Bias",  color.silver, size.tiny, color.new(#0d0d0d,0))
+    cell(1, 25, biasTxt,     biasClr,      size.tiny, color.new(#0d0d0d,0))
+
+    pdHTxt  = "Prev Day H: " + p(prevDayHigh) + "  L: " + p(prevDayLow)
+    pdHClr  = nearPrevHigh or nearPrevLow ? color.red : color.lime
+    pdHNote = nearPrevHigh or nearPrevLow ? "  ← NEAR LEVEL" : "  ✔ Clear"
+    cell(0, 26, "Key Levels", color.silver, size.tiny, color.new(#0d0d0d,0))
+    cell(1, 26, pdHTxt + pdHNote, pdHClr,  size.tiny, color.new(#0d0d0d,0))
+
+    scBull   = isLong  ? (strongBull ? "✔ Strong bull body" : bullPattern ? "✔ Bull pattern" : "✘ Weak candle") : "—"
+    scBear   = isShort ? (strongBear ? "✔ Strong bear body" : bearPattern ? "✔ Bear pattern" : "✘ Weak candle") : "—"
+    scTxt    = isLong ? scBull : isShort ? scBear : "—"
+    scClr    = (isLong and (strongBull or bullPattern)) or (isShort and (strongBear or bearPattern)) ? color.lime : color.red
+    cell(0, 27, "Entry Candle", color.silver, size.tiny, color.new(#0d0d0d,0))
+    cell(1, 27, scTxt,          scClr,        size.tiny, color.new(#0d0d0d,0))
+
+    cell(0, 28, "─────────────",            color.new(color.gray,50), size.tiny, color.new(#0d0d0d,0))
+    cell(1, 28, "─────────────────────────", color.new(color.gray,50), size.tiny, color.new(#0d0d0d,0))
+
+    liqTotal = liqBullVol + liqBearVol
+    liqBPct  = liqTotal > 0 ? math.round(liqBullVol / liqTotal * 100) : 50
+    liqSPct  = 100 - liqBPct
+    liqTxt   = liqBPct > liqSPct ?
+               "▲ BUY " + str.tostring(liqBPct) + "% vs " + str.tostring(liqSPct) + "% SELL" :
+               "▼ SELL " + str.tostring(liqSPct) + "% vs " + str.tostring(liqBPct) + "% BUY"
+    liqClr   = liqBPct > liqSPct ? color.lime : color.red
+    liqBg    = liqBPct > liqSPct ? color.new(#001a00,0) : color.new(#1a0000,0)
+    liqLbl   = useLiq ? liqTxt : liqTxt + "  (filter OFF)"
+    cell(0, 29, "Liq Volume",  color.silver, size.tiny,  color.new(#0d0d0d,0))
+    cell(1, 29, liqLbl,        liqClr,       size.small, liqBg)
+
+    // ── SCANNER TABLE ─────────────────────────
+    // Header row
+    scCell(0, 0, "#",      color.white, size.small, color.new(#1a1a2e, 0))
+    scCell(1, 0, "MARKET", color.white, size.small, color.new(#1a1a2e, 0))
+    scCell(2, 0, "SIGNAL", color.white, size.small, color.new(#1a1a2e, 0))
+    scCell(3, 0, "SCORE",  color.white, size.small, color.new(#1a1a2e, 0))
+    scCell(4, 0, "ENTRY  →  TP1", color.white, size.small, color.new(#1a1a2e, 0))
+    scCell(5, 0, "STOP LOSS",     color.white, size.small, color.new(#1a1a2e, 0))
+
+    // Build arrays for ranking (push each market)
+    scScores = array.new_int(0)
+    scDirs   = array.new_int(0)
+    scClose  = array.new_float(0)
+    scAtr    = array.new_float(0)
+    scSyms   = array.new_string(0)
+
+    array.push(scScores, sc1)
+    array.push(scDirs,   d1)
+    array.push(scClose,  c1)
+    array.push(scAtr,    a1)
+    array.push(scSyms,   sym1)
+    array.push(scScores, sc2)
+    array.push(scDirs,   d2)
+    array.push(scClose,  c2)
+    array.push(scAtr,    a2)
+    array.push(scSyms,   sym2)
+    array.push(scScores, sc3)
+    array.push(scDirs,   d3)
+    array.push(scClose,  c3)
+    array.push(scAtr,    a3)
+    array.push(scSyms,   sym3)
+    array.push(scScores, sc4)
+    array.push(scDirs,   d4)
+    array.push(scClose,  c4)
+    array.push(scAtr,    a4)
+    array.push(scSyms,   sym4)
+    array.push(scScores, sc5)
+    array.push(scDirs,   d5)
+    array.push(scClose,  c5)
+    array.push(scAtr,    a5)
+    array.push(scSyms,   sym5)
+    array.push(scScores, sc6)
+    array.push(scDirs,   d6)
+    array.push(scClose,  c6)
+    array.push(scAtr,    a6)
+    array.push(scSyms,   sym6)
+    array.push(scScores, sc7)
+    array.push(scDirs,   d7)
+    array.push(scClose,  c7)
+    array.push(scAtr,    a7)
+    array.push(scSyms,   sym7)
+    array.push(scScores, sc8)
+    array.push(scDirs,   d8)
+    array.push(scClose,  c8)
+    array.push(scAtr,    a8)
+    array.push(scSyms,   sym8)
+    array.push(scScores, sc9)
+    array.push(scDirs,   d9)
+    array.push(scClose,  c9)
+    array.push(scAtr,    a9)
+    array.push(scSyms,   sym9)
+    array.push(scScores, sc10)
+    array.push(scDirs,   d10)
+    array.push(scClose,  c10)
+    array.push(scAtr,    a10)
+    array.push(scSyms,   sym10)
+
+    // Track which markets already shown
+    shown = array.new_bool(10, false)
+
+    // Find and display top 5 by score
+    for rank = 0 to 4
+        bestSc  = -1
+        bestIdx = 0
+        for i = 0 to 9
+            sc_i = array.get(scScores, i)
+            if not array.get(shown, i) and sc_i > bestSc
+                bestSc  := sc_i
+                bestIdx := i
+        array.set(shown, bestIdx, true)
+
+        symStr  = array.get(scSyms,   bestIdx)
+        sc_val  = array.get(scScores, bestIdx)
+        dir_val = array.get(scDirs,   bestIdx)
+        cl_val  = array.get(scClose,  bestIdx)
+        at_val  = array.get(scAtr,    bestIdx)
+
+        isLg    = dir_val == 1
+        dirTxt  = isLg ? "▲ BUY" : "▼ SELL"
+        dirClr  = isLg ? color.lime : color.red
+        bgClr   = isLg ? color.new(#001a00, 0) : color.new(#1a0000, 0)
+        entry_  = cl_val
+        tp1_    = isLg ? cl_val + at_val * tp1Mult : cl_val - at_val * tp1Mult
+        sl_     = isLg ? cl_val - at_val * slMult  : cl_val + at_val * slMult
+        row     = rank + 1
+
+        scCell(0, row, str.tostring(rank + 1),                      color.white, size.small, color.new(#111111, 0))
+        scCell(1, row, shortSym(symStr),                             color.white, size.small, color.new(#111111, 0))
+        scCell(2, row, dirTxt,                                       dirClr,      size.small, bgClr)
+        scCell(3, row, str.tostring(sc_val) + " / 6",               sc_val >= minConf ? color.lime : color.yellow, size.small, color.new(#111111, 0))
+        scCell(4, row, scanFmt(entry_) + "  →  " + scanFmt(tp1_),   dirClr,      size.small, color.new(#111111, 0))
+        scCell(5, row, scanFmt(sl_),                                 color.red,   size.small, color.new(#1a0000, 0))
+
+// ─────────────────────────────────────────────
+// ALERTS
+// ─────────────────────────────────────────────
+alertcondition(longSignal,  "▲ LONG Entry",  "LONG entry on {{ticker}} ({{interval}}). Check panel for TP/SL.")
+alertcondition(shortSignal, "▼ SHORT Entry", "SHORT entry on {{ticker}} ({{interval}}). Check panel for TP/SL.")
+alertcondition(not lTP1Hit[1] and lTP1Hit, "⚡ LONG TP1 Hit — Move SL to Entry",  "LONG TP1 reached on {{ticker}}. Move stop loss to entry (breakeven).")
+alertcondition(not sTP1Hit[1] and sTP1Hit, "⚡ SHORT TP1 Hit — Move SL to Entry", "SHORT TP1 reached on {{ticker}}. Move stop loss to entry (breakeven).")
